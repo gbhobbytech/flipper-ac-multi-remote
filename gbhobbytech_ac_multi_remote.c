@@ -132,7 +132,7 @@ static void draw_header(Canvas* canvas, const char* heading) {
 }
 
 static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state) {
-    char temperature_text[8];
+    char temperature_text[16];
     char power_text[12];
     char fan_text[12];
     char profile_text[24];
