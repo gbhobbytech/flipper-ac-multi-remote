@@ -14,4 +14,5 @@ App(
     fap_author="Enlighten Tech",
     fap_weburl="https://github.com/gbhobbytech/flipper-ac-multi-remote",
     fap_icon_assets="images",
+    fap_libs=["infrared"],
 )
