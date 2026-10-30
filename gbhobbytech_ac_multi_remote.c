@@ -135,7 +135,7 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     char temperature_text[8];
     char power_text[12];
     char fan_text[12];
-    char profile_text[20];
+    char profile_text[24];
     char mode_text[12];
 
     if(state->active_profile_id && state->mitsubishi_supported) {
