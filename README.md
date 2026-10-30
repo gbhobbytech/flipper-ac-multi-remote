@@ -12,7 +12,9 @@ A simple infrared controller for air conditioners, built as a Flipper Zero exter
 
 ## Current development status
 
-The current commit is an interactive UI prototype. It demonstrates the two keypad modes and preview values. It does **not** transmit infrared signals, save profiles, or learn from an original remote yet.
+The app now has a guided raw-signal learning flow for a normal/on state and an off state. It saves each completed profile to the Flipper microSD card and can replay those two learned states from the Control screen.
+
+Temperature and fan adjustment are not yet encoded for learned profiles. Those controls will be enabled when a supported protocol profile or a sufficient set of learned presets is available. Without a saved profile, the screen remains in preview mode.
 
 ## Build
 
