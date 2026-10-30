@@ -3,40 +3,122 @@
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <input/input.h>
+#include <storage/storage.h>
+#include <toolbox/path.h>
+#include <infrared/worker/infrared_worker.h>
+#include <lib/infrared/signal/infrared_signal.h>
 
-#define EVENT_QUEUE_SIZE 8U
+#define EVENT_QUEUE_SIZE 12U
+#define MAX_PROFILES 8U
 #define OK_DOUBLE_CLICK_MS 300U
+#define PROFILE_DIRECTORY EXT_PATH("apps_data/gbhobbytech_ac_multi_remote")
+#define PROFILE_PATH_FORMAT PROFILE_DIRECTORY "/AC_Unit_%02u.ir"
 
 typedef enum {
     KeypadModeControl,
     KeypadModeSelectUnit,
 } KeypadMode;
 
+typedef enum {
+    PageControl,
+    PageSelectUnit,
+    PageLearnNormal,
+    PageListenNormal,
+    PageLearnOff,
+    PageListenOff,
+    PageLearnDone,
+    PageLearnFailed,
+} AppPage;
+
+typedef enum {
+    AppEventTypeInput,
+    AppEventTypeSignalCaptured,
+} AppEventType;
+
+typedef struct {
+    AppEventType type;
+    InputEvent input;
+} AppEvent;
+
 typedef struct {
     FuriMessageQueue* event_queue;
+    FuriMutex* capture_mutex;
+    ViewPort* view_port;
+    InfraredWorker* infrared_worker;
+    InfraredSignal* capture_signal;
+    InfraredSignal* normal_signal;
     KeypadMode mode;
+    AppPage page;
+    uint8_t profile_ids[MAX_PROFILES];
+    size_t profile_count;
+    size_t selected_unit_index;
+    uint8_t active_profile_id;
+    uint8_t pending_profile_id;
     uint8_t temperature_c;
     uint8_t fan_speed;
     bool power_on;
+    bool preview_power_on;
+    bool capturing;
+    bool capture_received;
     bool running;
 } AcMultiRemoteState;
 
 static const char* const fan_speed_names[] = {"AUTO", "LOW", "MED", "HIGH"};
 #define FAN_SPEED_COUNT (sizeof(fan_speed_names) / sizeof(fan_speed_names[0]))
 
-static void input_callback(InputEvent* event, void* context) {
+static void app_request_redraw(AcMultiRemoteState* state) {
+    view_port_update(state->view_port);
+}
+
+static void input_callback(InputEvent* input, void* context) {
     AcMultiRemoteState* state = context;
 
-    if(event->type == InputTypeShort) {
-        furi_message_queue_put(state->event_queue, event, FuriWaitForever);
+    if(input->type == InputTypeShort) {
+        AppEvent event = {
+            .type = AppEventTypeInput,
+            .input = *input,
+        };
+        furi_message_queue_put(state->event_queue, &event, FuriWaitForever);
     }
 }
 
-static void draw_header(Canvas* canvas, const char* mode_name) {
+static void received_signal_callback(void* context, InfraredWorkerSignal* received_signal) {
+    AcMultiRemoteState* state = context;
+    if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) != FuriStatusOk) return;
+
+    bool post_event = false;
+    if(state->capturing && !state->capture_received) {
+        if(infrared_worker_signal_is_decoded(received_signal)) {
+            infrared_signal_set_message(
+                state->capture_signal, infrared_worker_get_decoded_signal(received_signal));
+        } else {
+            const uint32_t* timings = NULL;
+            size_t timings_count = 0;
+            infrared_worker_get_raw_signal(received_signal, &timings, &timings_count);
+            infrared_signal_set_raw_signal(
+                state->capture_signal,
+                timings,
+                timings_count,
+                INFRARED_COMMON_CARRIER_FREQUENCY,
+                INFRARED_COMMON_DUTY_CYCLE);
+        }
+        state->capture_received = true;
+        post_event = true;
+    }
+
+    furi_mutex_release(state->capture_mutex);
+
+    if(post_event) {
+        AppEvent event = {.type = AppEventTypeSignalCaptured};
+        furi_message_queue_put(state->event_queue, &event, FuriWaitForever);
+    }
+}
+
+static void draw_header(Canvas* canvas, const char* heading) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 4, 10, "AC MULTI REMOTE");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 4, 20, mode_name);
+    canvas_draw_str(canvas, 4, 20, heading);
     canvas_draw_line(canvas, 4, 23, 123, 23);
 }
 
@@ -44,99 +126,434 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     char temperature_text[24];
     char power_text[24];
     char fan_text[24];
+    char profile_text[24];
 
     draw_header(canvas, "CONTROL / 2xOK: UNITS");
 
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 4, 33, "NO PROFILE - PREVIEW");
+    if(state->active_profile_id) {
+        snprintf(profile_text, sizeof(profile_text), "AC UNIT %02u: LEARNED", (unsigned)state->active_profile_id);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 4, 33, profile_text);
+        snprintf(power_text, sizeof(power_text), "POWER  %s", state->power_on ? "ON*" : "OFF*");
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 4, 46, power_text);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 4, 56, "TEMP/FAN NOT LEARNED");
+    } else {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 4, 33, "NO PROFILE - PREVIEW");
+        snprintf(temperature_text, sizeof(temperature_text), "TEMP  %u C", (unsigned)state->temperature_c);
+        snprintf(power_text, sizeof(power_text), "POWER  %s", state->preview_power_on ? "ON" : "OFF");
+        snprintf(fan_text, sizeof(fan_text), "FAN  %s", fan_speed_names[state->fan_speed]);
 
-    snprintf(temperature_text, sizeof(temperature_text), "TEMP  %u C", state->temperature_c);
-    snprintf(power_text, sizeof(power_text), "POWER  %s", state->power_on ? "ON" : "OFF");
-    snprintf(fan_text, sizeof(fan_text), "FAN  %s", fan_speed_names[state->fan_speed]);
-
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 4, 46, temperature_text);
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 4, 55, power_text);
-    canvas_draw_str(canvas, 70, 55, fan_text);
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 4, 46, temperature_text);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 4, 55, power_text);
+        canvas_draw_str(canvas, 70, 55, fan_text);
+    }
 }
 
-static void draw_unit_screen(Canvas* canvas) {
+static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
+    char unit_text[32];
+
     draw_header(canvas, "SELECT UNIT");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 4, 37, "No remote profiles saved");
-    canvas_draw_str(canvas, 4, 51, "OK or BACK: return");
-}
 
-static void draw_callback(Canvas* canvas, void* context) {
-    const AcMultiRemoteState* state = context;
-
-    canvas_clear(canvas);
-    if(state->mode == KeypadModeControl) {
-        draw_control_screen(canvas, state);
+    if(state->profile_count == 0) {
+        canvas_draw_str(canvas, 4, 37, "No remote profiles saved");
+        canvas_draw_str(canvas, 4, 51, "OK: ADD REMOTE");
+    } else if(state->selected_unit_index < state->profile_count) {
+        const unsigned profile_id = (unsigned)state->profile_ids[state->selected_unit_index];
+        snprintf(unit_text, sizeof(unit_text), "AC UNIT %02u", profile_id);
+        canvas_draw_str(canvas, 4, 37, unit_text);
+        canvas_draw_str(canvas, 4, 51, "< / > SELECT   OK: USE");
     } else {
-        draw_unit_screen(canvas);
+        canvas_draw_str(canvas, 4, 37, "Add a new remote");
+        canvas_draw_str(canvas, 4, 51, "< / > SELECT   OK: ADD");
     }
 }
 
-static void handle_single_ok(AcMultiRemoteState* state) {
-    if(state->mode == KeypadModeControl) {
-        // Preview state only. Infrared transmission is not connected yet.
-        state->power_on = !state->power_on;
-    } else {
-        state->mode = KeypadModeControl;
-    }
-}
+static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state) {
+    canvas_set_font(canvas, FontSecondary);
 
-static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
-    if(event->key == InputKeyBack) {
-        if(state->mode == KeypadModeSelectUnit) {
-            state->mode = KeypadModeControl;
-        } else {
-            state->running = false;
-        }
-        return;
-    }
-
-    if(event->key == InputKeyOk) {
-        return;
-    }
-
-    if(state->mode != KeypadModeControl) {
-        return;
-    }
-
-    switch(event->key) {
-    case InputKeyUp:
-        if(state->temperature_c < 30) state->temperature_c++;
+    switch(state->page) {
+    case PageLearnNormal:
+        draw_header(canvas, "LEARN NORMAL STATE");
+        canvas_draw_str(canvas, 4, 34, "Set the AC to usual settings.");
+        canvas_draw_str(canvas, 4, 45, "OK to listen, then press a");
+        canvas_draw_str(canvas, 4, 56, "setting button on its remote.");
         break;
-    case InputKeyDown:
-        if(state->temperature_c > 16) state->temperature_c--;
+    case PageListenNormal:
+        draw_header(canvas, "LISTENING FOR NORMAL");
+        canvas_draw_str(canvas, 4, 36, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 47, "Press a setting button.");
+        canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
         break;
-    case InputKeyLeft:
-        if(state->fan_speed > 0) state->fan_speed--;
+    case PageLearnOff:
+        draw_header(canvas, "LEARN OFF STATE");
+        canvas_draw_str(canvas, 4, 34, "Unit should be on.");
+        canvas_draw_str(canvas, 4, 45, "OK to listen, then press");
+        canvas_draw_str(canvas, 4, 56, "POWER to switch it off.");
         break;
-    case InputKeyRight:
-        if(state->fan_speed < (uint8_t)(FAN_SPEED_COUNT - 1U)) state->fan_speed++;
+    case PageListenOff:
+        draw_header(canvas, "LISTENING FOR OFF");
+        canvas_draw_str(canvas, 4, 36, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 47, "Press POWER to turn off.");
+        canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
+        break;
+    case PageLearnDone:
+        draw_header(canvas, "PROFILE SAVED");
+        canvas_draw_str(canvas, 4, 36, "Normal and Off learned.");
+        canvas_draw_str(canvas, 4, 48, "OK: RETURN TO CONTROLS");
+        break;
+    case PageLearnFailed:
+        draw_header(canvas, "LEARNING FAILED");
+        canvas_draw_str(canvas, 4, 36, "Could not save this profile.");
+        canvas_draw_str(canvas, 4, 48, "BACK: RETURN TO UNITS");
         break;
     default:
         break;
     }
 }
 
+static void draw_callback(Canvas* canvas, void* context) {
+    const AcMultiRemoteState* state = context;
+
+    canvas_clear(canvas);
+    if(state->page == PageControl) {
+        draw_control_screen(canvas, state);
+    } else if(state->page == PageSelectUnit) {
+        draw_unit_screen(canvas, state);
+    } else {
+        draw_learning_screen(canvas, state);
+    }
+}
+
+static void build_profile_path(uint8_t profile_id, char* path, size_t path_size) {
+    snprintf(path, path_size, PROFILE_PATH_FORMAT, (unsigned)profile_id);
+}
+
+static bool profile_signal_exists(Storage* storage, const char* path, const char* signal_name) {
+    bool found = false;
+    FlipperFormat* format = flipper_format_file_alloc(storage);
+    InfraredSignal* signal = infrared_signal_alloc();
+
+    if(flipper_format_file_open_existing(format, path)) {
+        found = infrared_signal_search_by_name_and_read(signal, format, signal_name) ==
+                InfraredErrorCodeNone;
+        flipper_format_file_close(format);
+    }
+
+    infrared_signal_free(signal);
+    flipper_format_free(format);
+    return found;
+}
+
+static size_t load_profiles(AcMultiRemoteState* state) {
+    size_t count = 0;
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, PROFILE_DIRECTORY);
+
+    for(uint8_t id = 1; id <= MAX_PROFILES; id++) {
+        char path[96];
+        build_profile_path(id, path, sizeof(path));
+        if(storage_common_stat(storage, path, NULL) == FSE_OK &&
+           profile_signal_exists(storage, path, "Normal") &&
+           profile_signal_exists(storage, path, "Off")) {
+            state->profile_ids[count++] = id;
+        }
+    }
+
+    furi_record_close(RECORD_STORAGE);
+    return count;
+}
+
+static uint8_t find_free_profile_id(void) {
+    uint8_t free_id = 0;
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, PROFILE_DIRECTORY);
+
+    for(uint8_t id = 1; id <= MAX_PROFILES; id++) {
+        char path[96];
+        build_profile_path(id, path, sizeof(path));
+        if(storage_common_stat(storage, path, NULL) == FSE_NOT_EXIST) {
+            free_id = id;
+            break;
+        }
+    }
+
+    furi_record_close(RECORD_STORAGE);
+    return free_id;
+}
+
+static bool save_signal_to_profile(
+    Storage* storage,
+    const char* path,
+    const char* name,
+    const InfraredSignal* signal,
+    bool create_file) {
+    bool success = false;
+    FlipperFormat* format = flipper_format_file_alloc(storage);
+    const bool opened = create_file ? flipper_format_file_open_new(format, path) :
+                                      flipper_format_file_open_append(format, path);
+
+    if(opened) {
+        success = true;
+        if(create_file) {
+            success = flipper_format_write_header_cstr(format, "IR signals file", 1);
+        }
+        if(success) {
+            success = infrared_signal_save(signal, format, name) == InfraredErrorCodeNone;
+        }
+        flipper_format_file_close(format);
+    }
+
+    flipper_format_free(format);
+    return success;
+}
+
+static bool save_new_profile(AcMultiRemoteState* state) {
+    bool success = false;
+    char path[96];
+    build_profile_path(state->pending_profile_id, path, sizeof(path));
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, PROFILE_DIRECTORY);
+
+    const bool normal_saved =
+        save_signal_to_profile(storage, path, "Normal", state->normal_signal, true);
+    if(normal_saved) {
+        success = save_signal_to_profile(storage, path, "Off", state->capture_signal, false);
+    }
+
+    if(!success && normal_saved) {
+        storage_common_remove(storage, path);
+    }
+
+    furi_record_close(RECORD_STORAGE);
+    return success;
+}
+
+static bool transmit_profile_signal(uint8_t profile_id, const char* signal_name) {
+    bool success = false;
+    char path[96];
+    build_profile_path(profile_id, path, sizeof(path));
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    FlipperFormat* format = flipper_format_file_alloc(storage);
+    InfraredSignal* signal = infrared_signal_alloc();
+
+    if(flipper_format_file_open_existing(format, path)) {
+        if(infrared_signal_search_by_name_and_read(signal, format, signal_name) ==
+           InfraredErrorCodeNone) {
+            infrared_signal_transmit(signal);
+            success = true;
+        }
+        flipper_format_file_close(format);
+    }
+
+    infrared_signal_free(signal);
+    flipper_format_free(format);
+    furi_record_close(RECORD_STORAGE);
+    return success;
+}
+
+static void start_capture(AcMultiRemoteState* state, bool capture_off) {
+    if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) == FuriStatusOk) {
+        state->capturing = true;
+        state->capture_received = false;
+        furi_mutex_release(state->capture_mutex);
+    }
+
+    state->page = capture_off ? PageListenOff : PageListenNormal;
+    infrared_worker_rx_set_received_signal_callback(
+        state->infrared_worker, received_signal_callback, state);
+    infrared_worker_rx_enable_signal_decoding(state->infrared_worker, true);
+    infrared_worker_rx_enable_blink_on_receiving(state->infrared_worker, true);
+    infrared_worker_rx_start(state->infrared_worker);
+    app_request_redraw(state);
+}
+
+static void stop_capture(AcMultiRemoteState* state) {
+    if(state->capturing) {
+        infrared_worker_rx_stop(state->infrared_worker);
+        if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) == FuriStatusOk) {
+            state->capturing = false;
+            furi_mutex_release(state->capture_mutex);
+        }
+    }
+}
+
+static void capture_completed(AcMultiRemoteState* state) {
+    stop_capture(state);
+
+    if(state->page == PageListenNormal) {
+        infrared_signal_set_signal(state->normal_signal, state->capture_signal);
+        state->page = PageLearnOff;
+    } else if(state->page == PageListenOff) {
+        state->page = save_new_profile(state) ? PageLearnDone : PageLearnFailed;
+        if(state->page == PageLearnDone) {
+            state->profile_count = load_profiles(state);
+            state->active_profile_id = state->pending_profile_id;
+            state->power_on = false;
+        }
+    }
+
+    app_request_redraw(state);
+}
+
+static void begin_new_profile(AcMultiRemoteState* state) {
+    state->pending_profile_id = find_free_profile_id();
+    if(state->pending_profile_id == 0) {
+        state->page = PageLearnFailed;
+    } else {
+        state->page = PageLearnNormal;
+    }
+}
+
+static void choose_selected_unit(AcMultiRemoteState* state) {
+    if(state->selected_unit_index < state->profile_count) {
+        state->active_profile_id = state->profile_ids[state->selected_unit_index];
+        state->power_on = false;
+        state->page = PageControl;
+    } else {
+        begin_new_profile(state);
+    }
+}
+
+static void handle_single_ok(AcMultiRemoteState* state) {
+    switch(state->page) {
+    case PageControl:
+        if(state->active_profile_id) {
+            const char* signal_name = state->power_on ? "Off" : "Normal";
+            if(transmit_profile_signal(state->active_profile_id, signal_name)) {
+                state->power_on = !state->power_on;
+            }
+        } else {
+            state->preview_power_on = !state->preview_power_on;
+        }
+        break;
+    case PageSelectUnit:
+        choose_selected_unit(state);
+        break;
+    case PageLearnNormal:
+        start_capture(state, false);
+        break;
+    case PageLearnOff:
+        start_capture(state, true);
+        break;
+    case PageLearnDone:
+        state->page = PageControl;
+        break;
+    case PageListenNormal:
+    case PageListenOff:
+    case PageLearnFailed:
+    default:
+        break;
+    }
+}
+
+static void handle_back(AcMultiRemoteState* state) {
+    switch(state->page) {
+    case PageControl:
+        state->running = false;
+        break;
+    case PageSelectUnit:
+        state->page = PageControl;
+        break;
+    case PageListenNormal:
+        stop_capture(state);
+        state->page = PageLearnNormal;
+        break;
+    case PageListenOff:
+        stop_capture(state);
+        state->page = PageLearnOff;
+        break;
+    case PageLearnNormal:
+    case PageLearnOff:
+    case PageLearnFailed:
+        state->page = PageSelectUnit;
+        break;
+    case PageLearnDone:
+        state->page = PageControl;
+        break;
+    }
+}
+
+static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
+    if(event->key == InputKeyBack) {
+        handle_back(state);
+        return;
+    }
+
+    if(event->key == InputKeyOk) {
+        handle_single_ok(state);
+        return;
+    }
+
+    if(state->page == PageControl && !state->active_profile_id) {
+        switch(event->key) {
+        case InputKeyUp:
+            if(state->temperature_c < 30) state->temperature_c++;
+            break;
+        case InputKeyDown:
+            if(state->temperature_c > 16) state->temperature_c--;
+            break;
+        case InputKeyLeft:
+            if(state->fan_speed > 0) state->fan_speed--;
+            break;
+        case InputKeyRight:
+            if(state->fan_speed < (uint8_t)(FAN_SPEED_COUNT - 1U)) state->fan_speed++;
+            break;
+        default:
+            break;
+        }
+    } else if(state->page == PageSelectUnit && state->profile_count < MAX_PROFILES) {
+        const size_t choices = state->profile_count + 1U;
+        if(event->key == InputKeyRight) {
+            state->selected_unit_index = (state->selected_unit_index + 1U) % choices;
+        } else if(event->key == InputKeyLeft) {
+            state->selected_unit_index =
+                (state->selected_unit_index == 0) ? choices - 1U : state->selected_unit_index - 1U;
+        }
+    }
+}
+
+static void handle_input_event(AcMultiRemoteState* state, const InputEvent* input) {
+    if(input->key == InputKeyOk &&
+       (state->page == PageControl || state->page == PageSelectUnit)) {
+        return;
+    }
+
+    handle_input(state, input);
+}
+
 int32_t gbhobbytech_ac_multi_remote_app(void* p) {
     UNUSED(p);
 
     AcMultiRemoteState state = {
-        .event_queue = furi_message_queue_alloc(EVENT_QUEUE_SIZE, sizeof(InputEvent)),
+        .event_queue = furi_message_queue_alloc(EVENT_QUEUE_SIZE, sizeof(AppEvent)),
+        .capture_mutex = furi_mutex_alloc(FuriMutexTypeNormal),
+        .infrared_worker = infrared_worker_alloc(),
+        .capture_signal = infrared_signal_alloc(),
+        .normal_signal = infrared_signal_alloc(),
         .mode = KeypadModeControl,
+        .page = PageControl,
         .temperature_c = 22,
         .fan_speed = 0,
         .power_on = false,
+        .preview_power_on = false,
+        .capturing = false,
+        .capture_received = false,
         .running = true,
     };
 
+    state.profile_count = load_profiles(&state);
+    if(state.profile_count > 0) state.active_profile_id = state.profile_ids[0];
+
     ViewPort* view_port = view_port_alloc();
+    state.view_port = view_port;
     view_port_draw_callback_set(view_port, draw_callback, &state);
     view_port_input_callback_set(view_port, input_callback, &state);
 
@@ -149,7 +566,7 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
     const uint32_t double_click_ticks = furi_ms_to_ticks(OK_DOUBLE_CLICK_MS);
 
     while(state.running) {
-        InputEvent event;
+        AppEvent event;
         uint32_t wait_ticks = FuriWaitForever;
 
         if(ok_pending) {
@@ -159,12 +576,22 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
 
         const FuriStatus status = furi_message_queue_get(state.event_queue, &event, wait_ticks);
         if(status == FuriStatusOk) {
-            if(event.key == InputKeyOk) {
+            if(event.type == AppEventTypeSignalCaptured) {
+                if(state.page == PageListenNormal || state.page == PageListenOff) {
+                    capture_completed(&state);
+                }
+            } else if(event.input.key == InputKeyOk &&
+                      (state.page == PageControl || state.page == PageSelectUnit)) {
                 const uint32_t now = furi_get_tick();
                 if(ok_pending && ((now - ok_tick) < double_click_ticks)) {
-                    state.mode = (state.mode == KeypadModeControl) ?
-                                    KeypadModeSelectUnit :
-                                    KeypadModeControl;
+                    if(state.page == PageControl) {
+                        state.page = PageSelectUnit;
+                        state.mode = KeypadModeSelectUnit;
+                        state.selected_unit_index = 0;
+                    } else {
+                        state.page = PageControl;
+                        state.mode = KeypadModeControl;
+                    }
                     ok_pending = false;
                 } else {
                     if(ok_pending) handle_single_ok(&state);
@@ -176,19 +603,24 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
                     handle_single_ok(&state);
                     ok_pending = false;
                 }
-                handle_input(&state, &event);
+                handle_input_event(&state, &event.input);
             }
-            view_port_update(view_port);
+            app_request_redraw(&state);
         } else if(ok_pending) {
             handle_single_ok(&state);
             ok_pending = false;
-            view_port_update(view_port);
+            app_request_redraw(&state);
         }
     }
 
+    stop_capture(&state);
     gui_remove_view_port(gui, view_port);
     furi_record_close(RECORD_GUI);
     view_port_free(view_port);
+    infrared_signal_free(state.normal_signal);
+    infrared_signal_free(state.capture_signal);
+    infrared_worker_free(state.infrared_worker);
+    furi_mutex_free(state.capture_mutex);
     furi_message_queue_free(state.event_queue);
 
     return 0;
