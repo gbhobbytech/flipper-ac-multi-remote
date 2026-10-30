@@ -131,6 +131,30 @@ static void draw_header(Canvas* canvas, const char* heading) {
     canvas_draw_line(canvas, 4, 23, 123, 23);
 }
 
+static void draw_control_key_hints(Canvas* canvas) {
+    canvas_set_font(canvas, FontSecondary);
+
+    /* Up and down arrows for temperature. */
+    canvas_draw_line(canvas, 6, 62, 6, 57);
+    canvas_draw_line(canvas, 4, 59, 6, 57);
+    canvas_draw_line(canvas, 8, 59, 6, 57);
+    canvas_draw_line(canvas, 12, 57, 12, 62);
+    canvas_draw_line(canvas, 10, 60, 12, 62);
+    canvas_draw_line(canvas, 14, 60, 12, 62);
+    canvas_draw_str(canvas, 17, 63, "TEMP");
+
+    /* Left and right arrows for fan speed. */
+    canvas_draw_line(canvas, 51, 60, 46, 60);
+    canvas_draw_line(canvas, 46, 60, 48, 58);
+    canvas_draw_line(canvas, 46, 60, 48, 62);
+    canvas_draw_line(canvas, 55, 60, 60, 60);
+    canvas_draw_line(canvas, 60, 60, 58, 58);
+    canvas_draw_line(canvas, 60, 60, 58, 62);
+    canvas_draw_str(canvas, 64, 63, "FAN");
+
+    canvas_draw_str(canvas, 89, 63, "OK POWER");
+}
+
 static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state) {
     char temperature_text[16];
     char power_text[12];
@@ -176,7 +200,7 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
 
         canvas_draw_line(canvas, 4, 54, 123, 54);
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 4, 63, "\u2191\u2193 TEMP  \u2190\u2192 FAN  OK POWER");
+        draw_control_key_hints(canvas);
     } else {
         draw_header(canvas, "CONTROL / 2xOK: UNITS");
 
