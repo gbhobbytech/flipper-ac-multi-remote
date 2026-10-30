@@ -122,7 +122,7 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
         if(state->fan_speed > 0) state->fan_speed--;
         break;
     case InputKeyRight:
-        if(state->fan_speed + 1 < FAN_SPEED_COUNT) state->fan_speed++;
+        if(state->fan_speed < (uint8_t)(FAN_SPEED_COUNT - 1U)) state->fan_speed++;
         break;
     default:
         break;
