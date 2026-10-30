@@ -9,7 +9,7 @@ App(
     sources=["*.c"],
     stack_size=4 * 1024,
     fap_category="Infrared",
-    fap_version="0.1",
+    fap_version="0.2",
     fap_icon="gbhobbytech_ac_multi_remote.png",
     fap_description="Multi-profile infrared controller for air conditioners",
     fap_author="Enlighten Tech",
