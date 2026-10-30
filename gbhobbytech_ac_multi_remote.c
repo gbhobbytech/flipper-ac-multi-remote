@@ -132,13 +132,11 @@ static void draw_header(Canvas* canvas, const char* heading) {
 }
 
 static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state) {
-    char temperature_text[24];
-    char power_text[24];
-    char fan_text[24];
-    char profile_text[24];
-    char mode_text[16];
-
-    draw_header(canvas, "OK=PWR HOLD=MODE  2x=UNIT");
+    char temperature_text[8];
+    char power_text[12];
+    char fan_text[12];
+    char profile_text[20];
+    char mode_text[12];
 
     if(state->active_profile_id && state->mitsubishi_supported) {
         const uint8_t mode_code = (state->mitsubishi_frame[6] >> 3) & 0x07U;
@@ -148,43 +146,64 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
         else if(mode_code == 3U) mode_name = "COOL";
         else if(mode_code == 4U) mode_name = "AUTO";
         else if(mode_code == 7U) mode_name = "FAN";
-        snprintf(profile_text, sizeof(profile_text), "UNIT %02u  MITSUBISHI", (unsigned)state->active_profile_id);
-        snprintf(temperature_text, sizeof(temperature_text), "TEMP %u C", (unsigned)state->temperature_c);
-        snprintf(power_text, sizeof(power_text), "POWER %s", state->power_on ? "ON" : "OFF");
-        snprintf(fan_text, sizeof(fan_text), "FAN %s", fan_speed_names[state->fan_speed]);
-        snprintf(mode_text, sizeof(mode_text), "MODE %s", mode_name);
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 4, 33, profile_text);
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 4, 47, temperature_text);
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 72, 47, mode_text);
-        canvas_draw_str(canvas, 4, 58, power_text);
-        canvas_draw_str(canvas, 70, 58, fan_text);
-    } else if(state->active_profile_id) {
-        snprintf(profile_text, sizeof(profile_text), "AC UNIT %02u: LEARNED", (unsigned)state->active_profile_id);
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 4, 33, profile_text);
-        snprintf(power_text, sizeof(power_text), "POWER  %s", state->power_on ? "ON*" : "OFF*");
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 4, 46, power_text);
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 4, 56, "TEMP/FAN NOT LEARNED");
-    } else {
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 4, 33, "NO PROFILE - PREVIEW");
-        snprintf(temperature_text, sizeof(temperature_text), "TEMP  %u C", (unsigned)state->temperature_c);
-        snprintf(power_text, sizeof(power_text), "POWER  %s", state->preview_power_on ? "ON" : "OFF");
-        snprintf(fan_text, sizeof(fan_text), "FAN  %s", fan_speed_names[state->fan_speed]);
 
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 4, 46, temperature_text);
+        snprintf(profile_text, sizeof(profile_text), "UNIT %02u", (unsigned)state->active_profile_id);
+        snprintf(temperature_text, sizeof(temperature_text), "%u", (unsigned)state->temperature_c);
+        snprintf(power_text, sizeof(power_text), "%s", state->power_on ? "ON" : "OFF");
+        snprintf(fan_text, sizeof(fan_text), "%s", fan_speed_names[state->fan_speed]);
+        snprintf(mode_text, sizeof(mode_text), "%s", mode_name);
+
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 4, 55, power_text);
-        canvas_draw_str(canvas, 70, 55, fan_text);
+        canvas_draw_str(canvas, 4, 9, "AC MULTI REMOTE");
+        canvas_draw_str(canvas, 96, 9, profile_text);
+        canvas_draw_line(canvas, 4, 13, 123, 13);
+        canvas_draw_str(canvas, 4, 22, "HOLD OK:MODE  2xOK:UNIT");
+        canvas_draw_line(canvas, 4, 25, 123, 25);
+
+        canvas_set_font(canvas, FontBigNumbers);
+        canvas_draw_str(canvas, 4, 48, temperature_text);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 30, 34, "\u00b0C");
+
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 52, 32, "MODE");
+        canvas_draw_str(canvas, 52, 41, "POWER");
+        canvas_draw_str(canvas, 52, 50, "FAN");
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 88, 32, mode_text);
+        canvas_draw_str(canvas, 88, 41, power_text);
+        canvas_draw_str(canvas, 88, 50, fan_text);
+
+        canvas_draw_line(canvas, 4, 54, 123, 54);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 4, 63, "\u2191\u2193 TEMP  \u2190\u2192 FAN  OK POWER");
+    } else {
+        draw_header(canvas, "CONTROL / 2xOK: UNITS");
+
+        if(state->active_profile_id) {
+            snprintf(profile_text, sizeof(profile_text), "AC UNIT %02u: LEARNED", (unsigned)state->active_profile_id);
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 4, 33, profile_text);
+            snprintf(power_text, sizeof(power_text), "POWER  %s", state->power_on ? "ON*" : "OFF*");
+            canvas_set_font(canvas, FontPrimary);
+            canvas_draw_str(canvas, 4, 46, power_text);
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 4, 56, "TEMP/FAN NOT LEARNED");
+        } else {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 4, 33, "NO PROFILE - PREVIEW");
+            snprintf(temperature_text, sizeof(temperature_text), "TEMP  %u C", (unsigned)state->temperature_c);
+            snprintf(power_text, sizeof(power_text), "POWER  %s", state->preview_power_on ? "ON" : "OFF");
+            snprintf(fan_text, sizeof(fan_text), "FAN  %s", fan_speed_names[state->fan_speed]);
+
+            canvas_set_font(canvas, FontPrimary);
+            canvas_draw_str(canvas, 4, 46, temperature_text);
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 4, 55, power_text);
+            canvas_draw_str(canvas, 70, 55, fan_text);
+        }
     }
 }
-
 static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
     char unit_text[32];
 
