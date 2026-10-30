@@ -255,7 +255,7 @@ static size_t load_profiles(AcMultiRemoteState* state) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     storage_simply_mkdir(storage, PROFILE_DIRECTORY);
 
-    for(uint8_t id = 1; id <= MAX_PROFILES; id++) {
+    for(uint8_t id = 1; id <= (uint8_t)MAX_PROFILES; id++) {
         char path[96];
         build_profile_path(id, path, sizeof(path));
         if(storage_common_stat(storage, path, NULL) == FSE_OK &&
@@ -274,7 +274,7 @@ static uint8_t find_free_profile_id(void) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     storage_simply_mkdir(storage, PROFILE_DIRECTORY);
 
-    for(uint8_t id = 1; id <= MAX_PROFILES; id++) {
+    for(uint8_t id = 1; id <= (uint8_t)MAX_PROFILES; id++) {
         char path[96];
         build_profile_path(id, path, sizeof(path));
         if(storage_common_stat(storage, path, NULL) == FSE_NOT_EXIST) {
@@ -509,11 +509,11 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
         default:
             break;
         }
-    } else if(state->page == PageSelectUnit && state->profile_count < MAX_PROFILES) {
-        const size_t choices = state->profile_count + 1U;
-        if(event->key == InputKeyRight) {
+    } else if(state->page == PageSelectUnit) {
+        const size_t choices = state->profile_count + ((state->profile_count < MAX_PROFILES) ? 1U : 0U);
+        if(choices > 0 && event->key == InputKeyRight) {
             state->selected_unit_index = (state->selected_unit_index + 1U) % choices;
-        } else if(event->key == InputKeyLeft) {
+        } else if(choices > 0 && event->key == InputKeyLeft) {
             state->selected_unit_index =
                 (state->selected_unit_index == 0) ? choices - 1U : state->selected_unit_index - 1U;
         }
