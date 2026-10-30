@@ -16,7 +16,7 @@
 #define PROFILE_PATH_FORMAT PROFILE_DIRECTORY "/AC_Unit_%02u.ir"
 #define MITSUBISHI_TEMP_MIN 16U
 #define MITSUBISHI_TEMP_MAX 31U
-static const uint8_t mitsubishi_fan_codes[] = {0U, 1U, 2U, 4U};
+static const uint8_t mitsubishi_fan_codes[] = {0U, 1U, 2U, 3U, 4U};
 
 typedef enum {
     KeypadModeControl,
@@ -71,7 +71,7 @@ typedef struct {
     bool running;
 } AcMultiRemoteState;
 
-static const char* const fan_speed_names[] = {"AUTO", "LOW", "MED", "HIGH"};
+static const char* const fan_speed_names[] = {"AUTO", "LOW", "MED", "HIGH", "MAX"};
 #define FAN_SPEED_COUNT (sizeof(fan_speed_names) / sizeof(fan_speed_names[0]))
 
 static void app_request_redraw(AcMultiRemoteState* state) {
@@ -414,12 +414,11 @@ static bool load_mitsubishi_profile_state(AcMultiRemoteState* state, uint8_t pro
         const uint8_t fan_code = state->mitsubishi_frame[9] & 0x07U;
         if((state->mitsubishi_frame[9] & 0x80U) || fan_code == 0U) {
             state->fan_speed = 0U;
-        } else if(fan_code == 1U) {
-            state->fan_speed = 1U;
-        } else if(fan_code == 2U) {
-            state->fan_speed = 2U;
         } else {
-            state->fan_speed = 3U;
+            state->fan_speed =
+                (fan_code < (uint8_t)(sizeof(mitsubishi_fan_codes) / sizeof(mitsubishi_fan_codes[0]))) ?
+                    fan_code :
+                    (uint8_t)(FAN_SPEED_COUNT - 1U);
         }
     }
 
