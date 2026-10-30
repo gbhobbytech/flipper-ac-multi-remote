@@ -45,7 +45,7 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     char power_text[24];
     char fan_text[24];
 
-    draw_header(canvas, "CONTROL");
+    draw_header(canvas, "CONTROL / 2xOK: UNITS");
 
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 4, 33, "NO PROFILE - PREVIEW");
@@ -59,18 +59,13 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 4, 55, power_text);
     canvas_draw_str(canvas, 70, 55, fan_text);
-
-    canvas_draw_line(canvas, 4, 58, 123, 58);
-    canvas_draw_str(canvas, 4, 63, "2xOK: UNITS  |  BACK: EXIT");
 }
 
 static void draw_unit_screen(Canvas* canvas) {
     draw_header(canvas, "SELECT UNIT");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 4, 36, "No remote profiles saved");
-    canvas_draw_str(canvas, 4, 47, "Setup wizard is next");
-    canvas_draw_line(canvas, 4, 58, 123, 58);
-    canvas_draw_str(canvas, 4, 63, "OK: RETURN  |  BACK: RETURN");
+    canvas_draw_str(canvas, 4, 37, "No remote profiles saved");
+    canvas_draw_str(canvas, 4, 51, "OK or BACK: return");
 }
 
 static void draw_callback(Canvas* canvas, void* context) {
