@@ -81,7 +81,8 @@ static void app_request_redraw(AcMultiRemoteState* state) {
 static void input_callback(InputEvent* input, void* context) {
     AcMultiRemoteState* state = context;
 
-    if(input->type == InputTypeShort) {
+    if(input->type == InputTypeShort ||
+       (input->type == InputTypeLong && input->key == InputKeyOk)) {
         AppEvent event = {
             .type = AppEventTypeInput,
             .input = *input,
@@ -135,19 +136,29 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     char power_text[24];
     char fan_text[24];
     char profile_text[24];
+    char mode_text[16];
 
-    draw_header(canvas, "CONTROL / 2xOK: UNITS");
+    draw_header(canvas, "OK=PWR HOLD=MODE  2x=UNIT");
 
     if(state->active_profile_id && state->mitsubishi_supported) {
+        const uint8_t mode_code = (state->mitsubishi_frame[6] >> 3) & 0x07U;
+        const char* mode_name = "UNKNOWN";
+        if(mode_code == 1U) mode_name = "HEAT";
+        else if(mode_code == 2U) mode_name = "DRY";
+        else if(mode_code == 3U) mode_name = "COOL";
+        else if(mode_code == 4U) mode_name = "AUTO";
+        else if(mode_code == 7U) mode_name = "FAN";
         snprintf(profile_text, sizeof(profile_text), "UNIT %02u  MITSUBISHI", (unsigned)state->active_profile_id);
         snprintf(temperature_text, sizeof(temperature_text), "TEMP %u C", (unsigned)state->temperature_c);
         snprintf(power_text, sizeof(power_text), "POWER %s", state->power_on ? "ON" : "OFF");
         snprintf(fan_text, sizeof(fan_text), "FAN %s", fan_speed_names[state->fan_speed]);
+        snprintf(mode_text, sizeof(mode_text), "MODE %s", mode_name);
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 4, 33, profile_text);
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str(canvas, 4, 47, temperature_text);
         canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 72, 47, mode_text);
         canvas_draw_str(canvas, 4, 58, power_text);
         canvas_draw_str(canvas, 70, 58, fan_text);
     } else if(state->active_profile_id) {
@@ -457,6 +468,19 @@ static void update_mitsubishi_power(AcMultiRemoteState* state, bool power_on) {
     if(transmit_mitsubishi_state(state)) state->power_on = power_on;
 }
 
+static void toggle_mitsubishi_mode(AcMultiRemoteState* state) {
+    const uint8_t current_mode = (state->mitsubishi_frame[6] >> 3) & 0x07U;
+    const bool switch_to_heat = current_mode == 3U;
+    const uint8_t next_mode = switch_to_heat ? 1U : 3U;
+
+    state->mitsubishi_frame[6] =
+        (uint8_t)((state->mitsubishi_frame[6] & (uint8_t)~0x38U) | (next_mode << 3));
+    state->mitsubishi_frame[8] =
+        (uint8_t)((state->mitsubishi_frame[8] & 0xF0U) | (switch_to_heat ? 0U : 6U));
+    ac_mitsubishi_update_checksum(state->mitsubishi_frame);
+    transmit_mitsubishi_state(state);
+}
+
 static void start_capture(AcMultiRemoteState* state, bool capture_off) {
     if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) == FuriStatusOk) {
         state->capturing = true;
@@ -674,6 +698,12 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
 }
 
 static void handle_input_event(AcMultiRemoteState* state, const InputEvent* input) {
+    if(input->key == InputKeyOk && input->type == InputTypeLong &&
+       state->page == PageControl && state->mitsubishi_supported) {
+        toggle_mitsubishi_mode(state);
+        return;
+    }
+
     if(input->key == InputKeyOk &&
        (state->page == PageControl || state->page == PageSelectUnit)) {
         return;
@@ -737,6 +767,7 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
                     capture_completed(&state);
                 }
             } else if(event.input.key == InputKeyOk &&
+                      event.input.type == InputTypeShort &&
                       (state.page == PageControl || state.page == PageSelectUnit)) {
                 const uint32_t now = furi_get_tick();
                 if(ok_pending && ((now - ok_tick) < double_click_ticks)) {
