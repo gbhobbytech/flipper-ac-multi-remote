@@ -1,4 +1,5 @@
 #include <furi.h>
+#include <stdio.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <input/input.h>
@@ -47,7 +48,8 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     draw_header(canvas, "CONTROL");
 
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 4, 33, "NO REMOTE PROFILE");
+    canvas_draw_str(canvas, 4, 33, "NO PROFILE - PREVIEW");
+
     snprintf(temperature_text, sizeof(temperature_text), "TEMP  %u C", state->temperature_c);
     snprintf(power_text, sizeof(power_text), "POWER  %s", state->power_on ? "ON" : "OFF");
     snprintf(fan_text, sizeof(fan_text), "FAN  %s", fan_speed_names[state->fan_speed]);
@@ -59,7 +61,7 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     canvas_draw_str(canvas, 70, 55, fan_text);
 
     canvas_draw_line(canvas, 4, 58, 123, 58);
-    canvas_draw_str(canvas, 4, 64, "PREVIEW ONLY  |  2xOK: UNITS");
+    canvas_draw_str(canvas, 4, 63, "2xOK: UNITS  |  BACK: EXIT");
 }
 
 static void draw_unit_screen(Canvas* canvas) {
@@ -68,7 +70,7 @@ static void draw_unit_screen(Canvas* canvas) {
     canvas_draw_str(canvas, 4, 36, "No remote profiles saved");
     canvas_draw_str(canvas, 4, 47, "Setup wizard is next");
     canvas_draw_line(canvas, 4, 58, 123, 58);
-    canvas_draw_str(canvas, 4, 64, "OK: RETURN  |  BACK: RETURN");
+    canvas_draw_str(canvas, 4, 63, "OK: RETURN  |  BACK: RETURN");
 }
 
 static void draw_callback(Canvas* canvas, void* context) {
@@ -84,7 +86,7 @@ static void draw_callback(Canvas* canvas, void* context) {
 
 static void handle_single_ok(AcMultiRemoteState* state) {
     if(state->mode == KeypadModeControl) {
-        // Preview state only. IR transmission is added in the next milestone.
+        // Preview state only. Infrared transmission is not connected yet.
         state->power_on = !state->power_on;
     } else {
         state->mode = KeypadModeControl;
