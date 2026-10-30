@@ -181,7 +181,7 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
         canvas_draw_str(canvas, 4, 9, "AC MULTI REMOTE");
         canvas_draw_str(canvas, 96, 9, profile_text);
         canvas_draw_line(canvas, 4, 13, 123, 13);
-        canvas_draw_str(canvas, 4, 22, "HOLD OK:MODE  DOUBLE OK:UNIT");
+        canvas_draw_str(canvas, 4, 22, "HOLD OK: MODE");
         canvas_draw_line(canvas, 4, 25, 123, 25);
 
         canvas_set_font(canvas, FontBigNumbers);
