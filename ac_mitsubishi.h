@@ -7,7 +7,7 @@
 
 #define AC_MITSUBISHI_FRAME_BYTES 18U
 #define AC_MITSUBISHI_PREFIX_MAX 120U
-#define AC_MITSUBISHI_RAW_MAX 500U
+#define AC_MITSUBISHI_RAW_MAX 420U
 
 bool ac_mitsubishi_decode_profile(
     const InfraredSignal* signal,
