@@ -8,6 +8,7 @@
 #include <infrared/worker/infrared_worker.h>
 #include <lib/infrared/signal/infrared_signal.h>
 #include "ac_mitsubishi.h"
+#include "ac_protocols.h"
 
 #define EVENT_QUEUE_SIZE 12U
 #define MAX_PROFILES 8U
@@ -16,6 +17,7 @@
 #define PROFILE_PATH_FORMAT PROFILE_DIRECTORY "/AC_Unit_%02u.ir"
 #define MITSUBISHI_TEMP_MIN 16U
 #define MITSUBISHI_TEMP_MAX 31U
+#define MENU_VISIBLE_ROWS 3U
 static const uint8_t mitsubishi_fan_codes[] = {0U, 1U, 2U, 3U, 4U};
 
 typedef enum {
@@ -26,8 +28,13 @@ typedef enum {
 typedef enum {
     PageControl,
     PageSelectUnit,
-    PageWizardIdentifyBrand,
+    PageWizardMethod,
     PageWizardSelectBrand,
+    PageWizardSelectRemote,
+    PageWizardConfirm,
+    PageIdentifyPrompt,
+    PageIdentifyListen,
+    PageIdentifyResult,
     PageLearnNormal,
     PageListenNormal,
     PageLearnOff,
@@ -58,8 +65,18 @@ typedef struct {
     uint8_t profile_ids[MAX_PROFILES];
     size_t profile_count;
     size_t selected_unit_index;
+    size_t wizard_method_index;
     size_t selected_manufacturer_index;
-    bool manufacturer_known;
+    size_t selected_remote_index;
+    const AcRemoteEntry* chosen_remote;
+    bool has_expected_variant;
+    size_t expected_variant;
+    AcIdentifyResult identify_result;
+    size_t identify_matches[AC_IDENTIFY_MAX_MATCHES];
+    size_t identify_match_count;
+    AcIdentifyResult learned_result;
+    size_t learned_matches[AC_IDENTIFY_MAX_MATCHES];
+    size_t learned_match_count;
     uint8_t active_profile_id;
     uint8_t pending_profile_id;
     uint8_t temperature_c;
@@ -76,8 +93,15 @@ typedef struct {
 } AcMultiRemoteState;
 
 static const char* const fan_speed_names[] = {"AUTO", "LOW", "MED", "HIGH", "MAX"};
-static const char* const manufacturer_names[] = {"MITSUBISHI ELECTRIC"};
-#define MANUFACTURER_COUNT (sizeof(manufacturer_names) / sizeof(manufacturer_names[0]))
+static const char* const wizard_method_names[] = {
+    "REMOTE MODEL CODE",
+    "CAPTURE REMOTE",
+    "LEARN ONLY (REPLAY)",
+};
+#define WIZARD_METHOD_COUNT (sizeof(wizard_method_names) / sizeof(wizard_method_names[0]))
+#define WIZARD_METHOD_REMOTE_CODE 0U
+#define WIZARD_METHOD_CAPTURE 1U
+#define WIZARD_METHOD_LEARN_ONLY 2U
 #define FAN_SPEED_COUNT (sizeof(fan_speed_names) / sizeof(fan_speed_names[0]))
 
 static void app_request_redraw(AcMultiRemoteState* state) {
@@ -310,31 +334,205 @@ static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
     }
 }
 
+/* ---- Wizard list menus ---- */
+
+/* Number of entries in the list shown on the current wizard page. Each list
+ * ends with a "not listed" entry that leads to capture identification. */
+static size_t wizard_menu_count(const AcMultiRemoteState* state) {
+    switch(state->page) {
+    case PageWizardMethod:
+        return WIZARD_METHOD_COUNT;
+    case PageWizardSelectBrand:
+        return ac_manufacturer_count() + 1U;
+    case PageWizardSelectRemote:
+        return ac_remote_count_for_manufacturer(state->selected_manufacturer_index) + 1U;
+    default:
+        return 0U;
+    }
+}
+
+static size_t* wizard_menu_selection(AcMultiRemoteState* state) {
+    switch(state->page) {
+    case PageWizardMethod:
+        return &state->wizard_method_index;
+    case PageWizardSelectBrand:
+        return &state->selected_manufacturer_index;
+    case PageWizardSelectRemote:
+        return &state->selected_remote_index;
+    default:
+        return NULL;
+    }
+}
+
+static size_t wizard_menu_selected(const AcMultiRemoteState* state) {
+    return wizard_menu_selection((AcMultiRemoteState*)state) ?
+               *wizard_menu_selection((AcMultiRemoteState*)state) :
+               0U;
+}
+
+static void wizard_menu_label(
+    const AcMultiRemoteState* state,
+    size_t index,
+    char* label,
+    size_t label_size) {
+    const size_t count = wizard_menu_count(state);
+    if(index + 1U == count && state->page != PageWizardMethod) {
+        snprintf(label, label_size, "NOT LISTED: CAPTURE");
+        return;
+    }
+
+    switch(state->page) {
+    case PageWizardMethod:
+        snprintf(label, label_size, "%s", wizard_method_names[index]);
+        break;
+    case PageWizardSelectBrand: {
+        const AcManufacturer* manufacturer = ac_manufacturer_get(index);
+        snprintf(label, label_size, "%s", manufacturer ? manufacturer->name : "?");
+        break;
+    }
+    case PageWizardSelectRemote: {
+        const AcRemoteEntry* remote =
+            ac_remote_get_for_manufacturer(state->selected_manufacturer_index, index);
+        snprintf(label, label_size, "%s", remote ? remote->remote_code : "?");
+        break;
+    }
+    default:
+        label[0] = '\0';
+        break;
+    }
+}
+
+/* Scrollable list: three rows, inverted highlight on the selection, and a
+ * scroll bar on the right when the list is longer than the screen. */
+static void draw_wizard_menu(Canvas* canvas, const AcMultiRemoteState* state) {
+    const size_t count = wizard_menu_count(state);
+    const size_t selected = wizard_menu_selected(state);
+    const size_t top = selected >= MENU_VISIBLE_ROWS ? selected - MENU_VISIBLE_ROWS + 1U : 0U;
+    char label[32];
+
+    canvas_set_font(canvas, FontSecondary);
+    for(size_t row = 0; row < MENU_VISIBLE_ROWS && top + row < count; row++) {
+        const size_t index = top + row;
+        const int32_t baseline = 33 + (int32_t)row * 10;
+        wizard_menu_label(state, index, label, sizeof(label));
+
+        if(index == selected) {
+            canvas_draw_rbox(canvas, 2, baseline - 8, 120, 10, 1);
+            canvas_set_color(canvas, ColorWhite);
+            draw_str_bold(canvas, 5, baseline, label);
+            canvas_set_color(canvas, ColorBlack);
+        } else {
+            canvas_draw_str(canvas, 5, baseline, label);
+        }
+    }
+
+    if(count > MENU_VISIBLE_ROWS) {
+        const int32_t track_top = 25;
+        const int32_t track_height = 30;
+        int32_t thumb_height = track_height * (int32_t)MENU_VISIBLE_ROWS / (int32_t)count;
+        if(thumb_height < 4) thumb_height = 4;
+        const int32_t thumb_top =
+            track_top + (track_height - thumb_height) * (int32_t)selected / (int32_t)(count - 1U);
+        canvas_draw_line(canvas, 126, track_top, 126, track_top + track_height - 1);
+        canvas_draw_box(canvas, 125, thumb_top, 3, thumb_height);
+    }
+
+    canvas_draw_str(canvas, 4, 63, "^v MOVE  OK SELECT  BACK");
+}
+
+static void draw_variant_name(
+    Canvas* canvas,
+    int32_t x,
+    int32_t y,
+    size_t variant_index) {
+    const AcProtocolFamily* family = ac_variant_family(variant_index);
+    const AcProtocolVariant* variant = ac_variant_get(variant_index);
+    char text[40];
+    snprintf(
+        text,
+        sizeof(text),
+        "%s %s",
+        family ? family->name : "?",
+        variant ? variant->name : "?");
+    draw_str_bold(canvas, x, y, text);
+}
+
 static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state) {
     canvas_set_font(canvas, FontSecondary);
 
     switch(state->page) {
-    case PageWizardIdentifyBrand:
-        draw_header(canvas, "ADD UNIT");
-        canvas_draw_str(canvas, 4, 35, "Can you identify the");
-        canvas_draw_str(canvas, 4, 45, "manufacturer?");
-        if(state->manufacturer_known) {
-            canvas_draw_str(canvas, 5, 58, "< NO");
-            draw_str_bold(canvas, 91, 58, "YES >");
-        } else {
-            draw_str_bold(canvas, 5, 58, "< NO");
-            canvas_draw_str(canvas, 91, 58, "YES >");
-        }
+    case PageWizardMethod:
+        draw_header(canvas, "ADD UNIT: IDENTIFY BY");
+        draw_wizard_menu(canvas, state);
         break;
-    case PageWizardSelectBrand: {
-        draw_header(canvas, "SELECT BRAND");
-        canvas_draw_str(canvas, 4, 35, "Supported protocol:");
-        const char* manufacturer =
-            manufacturer_names[state->selected_manufacturer_index % MANUFACTURER_COUNT];
-        draw_str_bold(canvas, 4, 47, manufacturer);
-        canvas_draw_str(canvas, 4, 59, "< / > CHANGE   OK: USE");
+    case PageWizardSelectBrand:
+        draw_header(canvas, "BRAND ON INDOOR UNIT");
+        draw_wizard_menu(canvas, state);
+        break;
+    case PageWizardSelectRemote:
+        draw_header(canvas, "CODE ON BACK OF REMOTE");
+        draw_wizard_menu(canvas, state);
+        break;
+    case PageWizardConfirm: {
+        const AcManufacturer* manufacturer =
+            state->chosen_remote ? ac_manufacturer_get(state->chosen_remote->manufacturer) :
+                                   NULL;
+        char remote_text[40];
+        draw_header(canvas, "THIS REMOTE USES");
+        canvas_draw_str(canvas, 4, 33, manufacturer ? manufacturer->name : "");
+        if(state->has_expected_variant) {
+            draw_variant_name(canvas, 4, 43, state->expected_variant);
+        }
+        if(state->chosen_remote) {
+            snprintf(
+                remote_text,
+                sizeof(remote_text),
+                "REMOTE %s",
+                state->chosen_remote->remote_code);
+            canvas_draw_str(canvas, 4, 53, remote_text);
+        }
+        canvas_draw_str(canvas, 4, 63, "OK: LEARN SIGNALS  BACK");
         break;
     }
+    case PageIdentifyPrompt:
+        draw_header(canvas, "IDENTIFY BY CAPTURE");
+        canvas_draw_str(canvas, 4, 33, "Point original remote");
+        canvas_draw_str(canvas, 4, 43, "at the Flipper. Press OK,");
+        canvas_draw_str(canvas, 4, 53, "then TEMP + on the remote.");
+        canvas_draw_str(canvas, 4, 63, "OK: LISTEN   BACK");
+        break;
+    case PageIdentifyListen:
+        draw_header(canvas, "LISTENING");
+        canvas_draw_str(canvas, 4, 35, "Press TEMP + on the");
+        canvas_draw_str(canvas, 4, 46, "original remote.");
+        canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
+        break;
+    case PageIdentifyResult:
+        if(state->identify_result == AcIdentifyMatch) {
+            draw_header(canvas, "PROTOCOL FOUND");
+            draw_variant_name(canvas, 4, 34, state->identify_matches[0]);
+            canvas_draw_str(canvas, 4, 45, "Next: learn Normal and");
+            canvas_draw_str(canvas, 4, 54, "Off from this remote.");
+            canvas_draw_str(canvas, 4, 63, "OK: NEXT    < RETRY");
+        } else {
+            char count_text[32];
+            if(state->identify_result == AcIdentifyAmbiguous) {
+                draw_header(canvas, "AMBIGUOUS MATCH");
+                snprintf(
+                    count_text,
+                    sizeof(count_text),
+                    "Fits %u protocols.",
+                    (unsigned)state->identify_match_count);
+                canvas_draw_str(canvas, 4, 34, count_text);
+            } else {
+                draw_header(canvas, "NOT RECOGNISED");
+                canvas_draw_str(canvas, 4, 34, "No supported protocol.");
+            }
+            canvas_draw_str(canvas, 4, 45, "Learn signals to replay");
+            canvas_draw_str(canvas, 4, 54, "on/off (no temp or fan).");
+            canvas_draw_str(canvas, 4, 63, "OK: LEARN   < RETRY");
+        }
+        break;
     case PageLearnNormal:
         draw_header(canvas, "LEARN NORMAL STATE");
         canvas_draw_str(canvas, 4, 34, "Set the AC to usual settings.");
@@ -359,11 +557,22 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         canvas_draw_str(canvas, 4, 47, "Press POWER to turn off.");
         canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
         break;
-    case PageLearnDone:
+    case PageLearnDone: {
         draw_header(canvas, "PROFILE SAVED");
-        canvas_draw_str(canvas, 4, 36, "Normal and Off learned.");
-        canvas_draw_str(canvas, 4, 48, "OK: RETURN TO CONTROLS");
+        canvas_draw_str(canvas, 4, 33, "Normal and Off learned.");
+        const bool decoded = state->learned_result == AcIdentifyMatch;
+        if(decoded) {
+            draw_variant_name(canvas, 4, 43, state->learned_matches[0]);
+        } else {
+            canvas_draw_str(canvas, 4, 43, "Replay only: on / off.");
+        }
+        if(state->has_expected_variant &&
+           (!decoded || state->learned_matches[0] != state->expected_variant)) {
+            canvas_draw_str(canvas, 4, 53, "Chosen protocol not seen.");
+        }
+        canvas_draw_str(canvas, 4, 63, "OK: RETURN TO CONTROLS");
         break;
+    }
     case PageLearnFailed:
         draw_header(canvas, "LEARNING FAILED");
         canvas_draw_str(canvas, 4, 36, "Could not save this profile.");
@@ -633,14 +842,14 @@ static void toggle_mitsubishi_mode(AcMultiRemoteState* state) {
     transmit_mitsubishi_state(state);
 }
 
-static void start_capture(AcMultiRemoteState* state, bool capture_off) {
+static void start_capture(AcMultiRemoteState* state, AppPage listen_page) {
     if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) == FuriStatusOk) {
         state->capturing = true;
         state->capture_received = false;
         furi_mutex_release(state->capture_mutex);
     }
 
-    state->page = capture_off ? PageListenOff : PageListenNormal;
+    state->page = listen_page;
     infrared_worker_rx_set_received_signal_callback(
         state->infrared_worker, received_signal_callback, state);
     infrared_worker_rx_enable_signal_decoding(state->infrared_worker, true);
@@ -662,12 +871,18 @@ static void stop_capture(AcMultiRemoteState* state) {
 static void capture_completed(AcMultiRemoteState* state) {
     stop_capture(state);
 
-    if(state->page == PageListenNormal) {
+    if(state->page == PageIdentifyListen) {
+        state->identify_result = ac_identify_signal(
+            state->capture_signal, state->identify_matches, &state->identify_match_count);
+        state->page = PageIdentifyResult;
+    } else if(state->page == PageListenNormal) {
         infrared_signal_set_signal(state->normal_signal, state->capture_signal);
         state->page = PageLearnOff;
     } else if(state->page == PageListenOff) {
         state->page = save_new_profile(state) ? PageLearnDone : PageLearnFailed;
         if(state->page == PageLearnDone) {
+            state->learned_result = ac_identify_signal(
+                state->normal_signal, state->learned_matches, &state->learned_match_count);
             state->profile_count = load_profiles(state);
             state->active_profile_id = state->pending_profile_id;
             if(!load_mitsubishi_profile_state(state, state->active_profile_id)) {
@@ -681,12 +896,84 @@ static void capture_completed(AcMultiRemoteState* state) {
 
 static void begin_new_profile(AcMultiRemoteState* state) {
     state->pending_profile_id = find_free_profile_id();
-    state->manufacturer_known = false;
+    state->wizard_method_index = 0;
     state->selected_manufacturer_index = 0;
+    state->selected_remote_index = 0;
+    state->chosen_remote = NULL;
+    state->has_expected_variant = false;
+    state->identify_result = AcIdentifyNoMatch;
+    state->identify_match_count = 0;
+    state->learned_result = AcIdentifyNoMatch;
+    state->learned_match_count = 0;
     if(state->pending_profile_id == 0) {
         state->page = PageLearnFailed;
     } else {
-        state->page = PageWizardIdentifyBrand;
+        state->page = PageWizardMethod;
+    }
+}
+
+static void open_identify_prompt(AcMultiRemoteState* state) {
+    state->chosen_remote = NULL;
+    state->has_expected_variant = false;
+    state->page = PageIdentifyPrompt;
+}
+
+/* Fallback path: learn Normal/Off and replay them without claiming any
+ * decoded protocol. */
+static void open_learn_only(AcMultiRemoteState* state) {
+    state->chosen_remote = NULL;
+    state->has_expected_variant = false;
+    state->page = PageLearnNormal;
+}
+
+static void select_wizard_item(AcMultiRemoteState* state) {
+    const size_t count = wizard_menu_count(state);
+    const size_t selected = wizard_menu_selected(state);
+    const bool not_listed = state->page != PageWizardMethod && selected + 1U == count;
+
+    if(not_listed) {
+        open_identify_prompt(state);
+        return;
+    }
+
+    switch(state->page) {
+    case PageWizardMethod:
+        if(selected == WIZARD_METHOD_REMOTE_CODE) {
+            state->selected_manufacturer_index = 0;
+            state->page = PageWizardSelectBrand;
+        } else if(selected == WIZARD_METHOD_CAPTURE) {
+            open_identify_prompt(state);
+        } else {
+            open_learn_only(state);
+        }
+        break;
+    case PageWizardSelectBrand:
+        state->selected_remote_index = 0;
+        state->page = PageWizardSelectRemote;
+        break;
+    case PageWizardSelectRemote:
+        state->chosen_remote =
+            ac_remote_get_for_manufacturer(state->selected_manufacturer_index, selected);
+        if(state->chosen_remote) {
+            state->has_expected_variant = true;
+            state->expected_variant = state->chosen_remote->variant;
+            state->page = PageWizardConfirm;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static void move_wizard_selection(AcMultiRemoteState* state, bool down) {
+    size_t* selection = wizard_menu_selection(state);
+    const size_t count = wizard_menu_count(state);
+    if(!selection || count == 0U) return;
+
+    if(down) {
+        *selection = (*selection + 1U) % count;
+    } else {
+        *selection = (*selection == 0U) ? count - 1U : *selection - 1U;
     }
 }
 
@@ -717,23 +1004,38 @@ static void handle_single_ok(AcMultiRemoteState* state) {
     case PageSelectUnit:
         choose_selected_unit(state);
         break;
-    case PageWizardIdentifyBrand:
-        state->page = state->manufacturer_known ? PageWizardSelectBrand : PageLearnNormal;
-        break;
+    case PageWizardMethod:
     case PageWizardSelectBrand:
+    case PageWizardSelectRemote:
+        select_wizard_item(state);
+        break;
+    case PageWizardConfirm:
         state->page = PageLearnNormal;
         break;
+    case PageIdentifyPrompt:
+        start_capture(state, PageIdentifyListen);
+        break;
+    case PageIdentifyResult:
+        if(state->identify_result == AcIdentifyMatch) {
+            state->has_expected_variant = true;
+            state->expected_variant = state->identify_matches[0];
+            state->page = PageLearnNormal;
+        } else {
+            open_learn_only(state);
+        }
+        break;
     case PageLearnNormal:
-        start_capture(state, false);
+        start_capture(state, PageListenNormal);
         break;
     case PageLearnOff:
-        start_capture(state, true);
+        start_capture(state, PageListenOff);
         break;
     case PageLearnDone:
         state->page = PageControl;
         break;
     case PageListenNormal:
     case PageListenOff:
+    case PageIdentifyListen:
     case PageLearnFailed:
     default:
         break;
@@ -748,11 +1050,29 @@ static void handle_back(AcMultiRemoteState* state) {
     case PageSelectUnit:
         state->page = PageControl;
         break;
-    case PageWizardIdentifyBrand:
+    case PageWizardMethod:
         state->page = PageSelectUnit;
         break;
     case PageWizardSelectBrand:
-        state->page = PageWizardIdentifyBrand;
+        state->page = PageWizardMethod;
+        break;
+    case PageWizardSelectRemote:
+        state->page = PageWizardSelectBrand;
+        break;
+    case PageWizardConfirm:
+        state->chosen_remote = NULL;
+        state->has_expected_variant = false;
+        state->page = PageWizardSelectRemote;
+        break;
+    case PageIdentifyPrompt:
+        state->page = PageWizardMethod;
+        break;
+    case PageIdentifyListen:
+        stop_capture(state);
+        state->page = PageIdentifyPrompt;
+        break;
+    case PageIdentifyResult:
+        state->page = PageIdentifyPrompt;
         break;
     case PageListenNormal:
         stop_capture(state);
@@ -861,19 +1181,13 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
                     state->profile_count - 1U :
                     state->selected_unit_index - 1U;
         }
-    } else if(state->page == PageWizardIdentifyBrand) {
-        if(event->key == InputKeyLeft) state->manufacturer_known = false;
-        else if(event->key == InputKeyRight) state->manufacturer_known = true;
-    } else if(state->page == PageWizardSelectBrand && MANUFACTURER_COUNT > 1U) {
-        if(event->key == InputKeyRight) {
-            state->selected_manufacturer_index =
-                (state->selected_manufacturer_index + 1U) % MANUFACTURER_COUNT;
-        } else if(event->key == InputKeyLeft) {
-            state->selected_manufacturer_index =
-                (state->selected_manufacturer_index == 0U) ?
-                    MANUFACTURER_COUNT - 1U :
-                    state->selected_manufacturer_index - 1U;
-        }
+    } else if(
+        state->page == PageWizardMethod || state->page == PageWizardSelectBrand ||
+        state->page == PageWizardSelectRemote) {
+        if(event->key == InputKeyDown) move_wizard_selection(state, true);
+        else if(event->key == InputKeyUp) move_wizard_selection(state, false);
+    } else if(state->page == PageIdentifyResult && event->key == InputKeyLeft) {
+        state->page = PageIdentifyPrompt;
     }
 }
 
@@ -959,7 +1273,8 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
         const FuriStatus status = furi_message_queue_get(state.event_queue, &event, wait_ticks);
         if(status == FuriStatusOk) {
             if(event.type == AppEventTypeSignalCaptured) {
-                if(state.page == PageListenNormal || state.page == PageListenOff) {
+                if(state.page == PageListenNormal || state.page == PageListenOff ||
+                   state.page == PageIdentifyListen) {
                     capture_completed(&state);
                 }
             } else if(event.input.key == InputKeyOk &&
