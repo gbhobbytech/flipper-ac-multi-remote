@@ -175,33 +175,41 @@ static void draw_str_bold(Canvas* canvas, int32_t x, int32_t y, const char* text
     canvas_draw_str(canvas, x + 1, y, text);
 }
 
-/* Side-by-side left/right arrows, centred on a text baseline. */
+/* Direction arrows share the line style used for the main-screen controls. */
+static void draw_left_arrow(Canvas* canvas, int32_t x, int32_t cy) {
+    canvas_draw_line(canvas, x + 4, cy, x, cy);
+    canvas_draw_line(canvas, x, cy, x + 2, cy - 2);
+    canvas_draw_line(canvas, x, cy, x + 2, cy + 2);
+}
+
+static void draw_right_arrow(Canvas* canvas, int32_t x, int32_t cy) {
+    canvas_draw_line(canvas, x, cy, x + 4, cy);
+    canvas_draw_line(canvas, x + 4, cy, x + 2, cy - 2);
+    canvas_draw_line(canvas, x + 4, cy, x + 2, cy + 2);
+}
+
+static void draw_up_arrow(Canvas* canvas, int32_t cx, int32_t cy) {
+    canvas_draw_line(canvas, cx, cy + 2, cx, cy - 2);
+    canvas_draw_line(canvas, cx, cy - 2, cx - 2, cy);
+    canvas_draw_line(canvas, cx, cy - 2, cx + 2, cy);
+}
+
+static void draw_down_arrow(Canvas* canvas, int32_t cx, int32_t cy) {
+    canvas_draw_line(canvas, cx, cy - 2, cx, cy + 2);
+    canvas_draw_line(canvas, cx, cy + 2, cx - 2, cy);
+    canvas_draw_line(canvas, cx, cy + 2, cx + 2, cy);
+}
+
 static void draw_fan_speed_arrows(Canvas* canvas, int32_t x, int32_t text_baseline_y) {
     const int32_t cy = text_baseline_y - 4;
-
-    /* Left arrow. */
-    canvas_draw_line(canvas, x + 2, cy, x + 5, cy);
-    canvas_draw_line(canvas, x + 2, cy, x + 4, cy - 2);
-    canvas_draw_line(canvas, x + 2, cy, x + 4, cy + 2);
-
-    /* Right arrow. */
-    canvas_draw_line(canvas, x + 7, cy, x + 10, cy);
-    canvas_draw_line(canvas, x + 8, cy - 2, x + 10, cy);
-    canvas_draw_line(canvas, x + 8, cy + 2, x + 10, cy);
+    draw_left_arrow(canvas, x + 2, cy);
+    draw_right_arrow(canvas, x + 7, cy);
 }
 
 /* Temperature up/down arrows below the temperature. */
 static void draw_temp_arrows(Canvas* canvas, int32_t x, int32_t cy) {
-    const int32_t up_x = x;
-    const int32_t down_x = x + 7;
-
-    canvas_draw_line(canvas, up_x, cy + 2, up_x, cy - 2);
-    canvas_draw_line(canvas, up_x, cy - 2, up_x - 2, cy);
-    canvas_draw_line(canvas, up_x, cy - 2, up_x + 2, cy);
-
-    canvas_draw_line(canvas, down_x, cy - 2, down_x, cy + 2);
-    canvas_draw_line(canvas, down_x, cy + 2, down_x - 2, cy);
-    canvas_draw_line(canvas, down_x, cy + 2, down_x + 2, cy);
+    draw_up_arrow(canvas, x, cy);
+    draw_down_arrow(canvas, x + 7, cy);
 }
 
 /* Short OK press: power. */
@@ -219,6 +227,16 @@ static void draw_mode_hold_icon(Canvas* canvas, int32_t cx, int32_t cy) {
 static void draw_double_ok_icon(Canvas* canvas, int32_t cx, int32_t cy) {
     canvas_draw_disc(canvas, cx, cy, 2);
     canvas_draw_disc(canvas, cx + 6, cy, 2);
+}
+
+static void draw_short_ok_hint(Canvas* canvas, int32_t x, int32_t baseline, const char* label) {
+    draw_power_short_icon(canvas, x + 2, baseline - 4);
+    canvas_draw_str(canvas, x + 8, baseline, label);
+}
+
+static void draw_hold_ok_hint(Canvas* canvas, int32_t x, int32_t baseline, const char* label) {
+    draw_mode_hold_icon(canvas, x + 3, baseline - 4);
+    canvas_draw_str(canvas, x + 10, baseline, label);
 }
 
 static void draw_control_key_hints(Canvas* canvas) {
@@ -337,17 +355,28 @@ static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
     draw_header(canvas, "SELECT UNIT");
     canvas_set_font(canvas, FontSecondary);
 
-    if(state->profile_count == 0) {
+    if(state->profile_count == 0U) {
         canvas_draw_str(canvas, 4, 37, "NO SAVED UNITS");
-        canvas_draw_str(canvas, 4, 51, "DOWN: ADD UNIT");
+        draw_down_arrow(canvas, 8, 48);
+        canvas_draw_str(canvas, 16, 52, "ADD UNIT");
+        draw_double_ok_icon(canvas, 7, 59);
+        canvas_draw_str(canvas, 22, 63, "CONTROL");
     } else if(state->selected_unit_index < state->profile_count) {
         const unsigned profile_id = (unsigned)state->profile_ids[state->selected_unit_index];
         snprintf(unit_text, sizeof(unit_text), "AC UNIT %02u", profile_id);
         canvas_draw_str(canvas, 4, 37, unit_text);
-        canvas_draw_str(canvas, 4, 51, "< / > CHANGE  OK: USE");
-        canvas_draw_str(canvas, 4, 62, "DOWN: ADD UNIT");
+
+        draw_fan_speed_arrows(canvas, 4, 52);
+        canvas_draw_str(canvas, 18, 52, "CHANGE");
+        draw_hold_ok_hint(canvas, 63, 52, "USE");
+
+        draw_down_arrow(canvas, 8, 59);
+        canvas_draw_str(canvas, 16, 63, "ADD");
+        draw_double_ok_icon(canvas, 61, 59);
+        canvas_draw_str(canvas, 76, 63, "CONTROL");
     }
 }
+
 
 /* ---- Wizard list menus ---- */
 
@@ -434,7 +463,10 @@ static void draw_wizard_menu(Canvas* canvas, const AcMultiRemoteState* state) {
         canvas_draw_box(canvas, 125, thumb_top, 3, thumb_height);
     }
 
-    canvas_draw_str(canvas, 4, 63, "^v MOVE  OK SELECT  BACK");
+    draw_temp_arrows(canvas, 7, 59);
+    canvas_draw_str(canvas, 18, 63, "MOVE");
+    draw_short_ok_hint(canvas, 55, 63, "SELECT");
+    canvas_draw_str(canvas, 102, 63, "BACK");
 }
 
 static void draw_variant_name(
@@ -470,7 +502,8 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         draw_header(canvas, "NO TESTS FOR BRAND YET");
         canvas_draw_str(canvas, 4, 36, "Learn from its remote");
         canvas_draw_str(canvas, 4, 48, "to use this unit.");
-        canvas_draw_str(canvas, 4, 61, "OK: LEARN REMOTE");
+        draw_short_ok_hint(canvas, 4, 63, "LEARN REMOTE");
+        canvas_draw_str(canvas, 97, 63, "BACK");
         break;
     case PageRoomProbe: {
         const size_t variant_index =
@@ -478,41 +511,47 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         draw_header(canvas, "TRY PROTOCOL IN ROOM");
         draw_variant_name(canvas, 4, 34, variant_index);
         canvas_draw_str(canvas, 4, 45, "Sends ON: COOL 24C AUTO");
-        canvas_draw_str(canvas, 4, 55, "Aim at unit, OK: SEND");
-        canvas_draw_str(canvas, 4, 63, "BACK: CANCEL");
+        canvas_draw_str(canvas, 4, 55, "Aim at unit.");
+        draw_short_ok_hint(canvas, 4, 63, "SEND");
+        canvas_draw_str(canvas, 82, 63, "BACK");
         break;
     }
     case PageRoomProbeQuestion:
         draw_header(canvas, "DID THE UNIT RESPOND?");
         canvas_draw_str(canvas, 4, 36, "Did it beep or start?");
-        canvas_draw_str(canvas, 4, 48, "LEFT: NO   RIGHT: YES");
-        canvas_draw_str(canvas, 4, 61, "BACK: BRANDS");
+        draw_left_arrow(canvas, 6, 48);
+        canvas_draw_str(canvas, 14, 52, "NO");
+        draw_right_arrow(canvas, 46, 48);
+        canvas_draw_str(canvas, 54, 52, "YES");
+        canvas_draw_str(canvas, 4, 63, "BACK: BRANDS");
         break;
     case PageRoomProbeSaved:
         draw_header(canvas, "PROTOCOL CONFIRMED");
         draw_variant_name(canvas, 4, 36, state->expected_variant);
-        canvas_draw_str(canvas, 4, 48, "Unit responded.");
         const AcProtocolVariant* variant = ac_variant_get(state->expected_variant);
         canvas_draw_str(
             canvas,
             4,
-            58,
+            48,
             (variant && variant->supports_state_control) ?
                 "DIRECT CONTROL READY" :
                 "POWER REPLAY READY");
-        canvas_draw_str(canvas, 4, 63, "OK: CONTROL");
+        draw_short_ok_hint(canvas, 4, 63, "CONTROL");
         break;
     case PageRoomProbeFailed:
         draw_header(canvas, "NO TEST RESPONDED");
         canvas_draw_str(canvas, 4, 36, "No protocol matched.");
-        canvas_draw_str(canvas, 4, 48, "OK: LEARN REMOTE");
-        canvas_draw_str(canvas, 4, 59, "BACK: CHOOSE BRAND");
+        canvas_draw_str(canvas, 4, 48, "Learn from the original remote.");
+        draw_short_ok_hint(canvas, 4, 63, "LEARN REMOTE");
+        canvas_draw_str(canvas, 91, 63, "BACK");
         break;
     case PageLearnNormal:
         draw_header(canvas, "LEARN NORMAL STATE");
         canvas_draw_str(canvas, 4, 34, "Set the AC to usual settings.");
-        canvas_draw_str(canvas, 4, 45, "OK to listen, then press a");
-        canvas_draw_str(canvas, 4, 56, "setting button on its remote.");
+        canvas_draw_str(canvas, 4, 45, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 56, "Choose any setting button.");
+        draw_short_ok_hint(canvas, 4, 63, "LISTEN");
+        canvas_draw_str(canvas, 101, 63, "BACK");
         break;
     case PageListenNormal:
         draw_header(canvas, "LISTENING FOR NORMAL");
@@ -523,8 +562,10 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
     case PageLearnOff:
         draw_header(canvas, "LEARN OFF STATE");
         canvas_draw_str(canvas, 4, 34, "Unit should be on.");
-        canvas_draw_str(canvas, 4, 45, "OK to listen, then press");
-        canvas_draw_str(canvas, 4, 56, "POWER to switch it off.");
+        canvas_draw_str(canvas, 4, 45, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 56, "Press POWER to switch it off.");
+        draw_short_ok_hint(canvas, 4, 63, "LISTEN");
+        canvas_draw_str(canvas, 101, 63, "BACK");
         break;
     case PageListenOff:
         draw_header(canvas, "LISTENING FOR OFF");
@@ -561,7 +602,7 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         } else if(variant && !variant->supports_state_control) {
             canvas_draw_str(canvas, 4, 53, "POWER REPLAY ONLY");
         }
-        canvas_draw_str(canvas, 4, 63, "OK: RETURN TO CONTROLS");
+        draw_short_ok_hint(canvas, 4, 63, "RETURN TO CONTROLS");
         break;
     }
     case PageLearnFailed:
@@ -1333,8 +1374,7 @@ static void handle_input_event(AcMultiRemoteState* state, const InputEvent* inpu
                 toggle_active_mode(state);
                 return;
             }
-        } else if(input->key == InputKeyOk &&
-                  state->page != PageSelectUnit) {
+        } else if(input->key == InputKeyOk) {
             handle_single_ok(state);
         }
 
