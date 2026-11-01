@@ -6,6 +6,7 @@ A simple infrared controller for air conditioners, built as a Flipper Zero exter
 
 - Keep the main control screen simple: power, temperature, and fan speed.
 - Use double-click OK to switch between **Control** and **Select Unit** keypad modes.
+- On **Select Unit**, short OK uses the selected unit, long OK opens **Rename / Delete**, and double-click OK returns to **Control**.
 - Store reusable remote profiles by protocol family, with optional user nicknames.
 - Use a guided setup flow to identify supported protocols or learn and replay verified AC states.
 - When a learned protocol cannot be interpreted, offer captured states as presets instead of claiming unavailable controls.
