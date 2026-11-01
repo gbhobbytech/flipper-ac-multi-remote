@@ -18,8 +18,9 @@ When the Normal capture contains a valid Mitsubishi Electric 144-bit state frame
 
 ### Adding a unit: identification wizard
 
-From **Select Unit**, press Down to add a unit. The wizard offers three routes:
+From **Select Unit**, press Down to add a unit. The wizard offers four routes:
 
+- **Try in room (no remote):** sends one generated test state for each variant with a room-probe builder, in catalogue order. The current candidates are Mitsubishi Electric 144-bit, MHI 88-bit, and MHI 152-bit. Each sends **On, Cool, 24 °C, Auto fan**. Confirm a beep or start to save generated On/Off states; if there is no response, the wizard advances to the next variant.
 - **Remote model code:** pick the brand on the indoor unit, then the code printed on the back of the original remote. The app shows the protocol family and variant for that remote, then learns Normal and Off.
 - **Capture remote:** press TEMP + on the original remote. The app compares the capture against the protocol matchers it implements and reports a match, no match, or an ambiguous match.
 - **Learn only (replay):** skip identification and learn Normal/Off for replay.
@@ -28,7 +29,7 @@ Every list ends with **Not listed: capture**. When a capture is not recognised o
 
 Brands, remote codes and variants live in `ac_protocols.c`. They are kept as separate records (manufacturer, protocol family, protocol variant, remote entry). Mitsubishi Electric and Mitsubishi Heavy Industries are separate manufacturers with unrelated protocols.
 
-Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit captures can be identified from their raw signal signatures. The bundled `ac_mhi.c` module now also builds complete MHI state frames and raw IR timings for both variants, including power, mode, temperature and fan fields. This frame builder is library groundwork: the app wizard and control screen do not yet use it to send MHI commands. MHI therefore remains replay-only in the current UI until the in-room protocol trial and direct-control paths are connected and verified on a real unit. The listed remote-code mappings are reference leads and have not yet been verified against a physical unit. The wizard marks unverified remote-code mappings and shows the replay-only limitation.
+Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit captures can be identified from their raw signal signatures. The bundled `ac_mhi.c` module builds complete frames and raw timings for both variants, and the in-room wizard uses it to send test states. A confirmed MHI profile currently saves generated On/Off signals for replay; direct temperature, fan and mode controls are not yet wired into the control screen. The listed remote-code mappings are reference leads and have not yet been verified against a physical unit. The wizard marks unverified remote-code mappings and shows the replay-only limitation. The room-test commands also need testing on a real MHI unit.
 
 For other raw profiles, the app continues to replay the learned Normal and Off signals and shows that temperature and fan are not decoded. Without a saved profile, the screen remains in preview mode.
 
