@@ -177,8 +177,8 @@ static void draw_mode_hold_icon(Canvas* canvas, int32_t cx, int32_t cy) {
 
 /* Double-click OK: open the unit list. */
 static void draw_double_ok_icon(Canvas* canvas, int32_t cx, int32_t cy) {
-    canvas_draw_circle(canvas, cx, cy, 2);
-    canvas_draw_circle(canvas, cx + 6, cy, 2);
+    canvas_draw_disc(canvas, cx, cy, 2);
+    canvas_draw_disc(canvas, cx + 6, cy, 2);
 }
 
 static void draw_control_key_hints(Canvas* canvas) {
