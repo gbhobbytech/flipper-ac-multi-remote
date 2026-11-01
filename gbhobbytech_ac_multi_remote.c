@@ -184,11 +184,11 @@ static void draw_double_ok_icon(Canvas* canvas, int32_t cx, int32_t cy) {
 static void draw_control_key_hints(Canvas* canvas) {
     canvas_set_font(canvas, FontSecondary);
 
-    canvas_draw_str(canvas, 24, 63, "HOLD");
-    draw_fan_speed_arrows(canvas, 44, 63);
-    canvas_draw_str(canvas, 57, 63, "UNIT");
-    draw_double_ok_icon(canvas, 82, 59);
-    canvas_draw_str(canvas, 94, 63, "LIST");
+    canvas_draw_str(canvas, 5, 63, "HOLD");
+    draw_fan_speed_arrows(canvas, 30, 63);
+    canvas_draw_str(canvas, 45, 63, "UNIT");
+    draw_double_ok_icon(canvas, 92, 59);
+    canvas_draw_str(canvas, 104, 63, "LIST");
 }
 
 static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state) {
@@ -242,7 +242,7 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
         draw_fan_speed_arrows(canvas, 115, 50);
 
         canvas_draw_line(canvas, 4, 54, 123, 54);
-        draw_temp_arrows(canvas, 11, 21);
+        draw_temp_arrows(canvas, 11, 25);
         draw_control_key_hints(canvas);
     } else {
         draw_header(canvas, "CONTROL / 2xOK: UNITS");
