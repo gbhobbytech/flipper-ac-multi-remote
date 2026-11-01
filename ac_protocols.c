@@ -90,11 +90,15 @@ static bool build_mhi_152_probe(bool power_on, InfraredSignal* signal) {
 enum {
     ManufacturerMitsubishiElectric,
     ManufacturerMitsubishiHeavy,
+    ManufacturerFujitsu,
+    ManufacturerGree,
 };
 
 static const AcManufacturer manufacturers[] = {
     [ManufacturerMitsubishiElectric] = {.name = "MITSUBISHI ELECTRIC"},
     [ManufacturerMitsubishiHeavy] = {.name = "MITSUBISHI HEAVY IND."},
+    [ManufacturerFujitsu] = {.name = "FUJITSU"},
+    [ManufacturerGree] = {.name = "GREE"},
 };
 
 enum {
@@ -103,8 +107,14 @@ enum {
 };
 
 static const AcProtocolFamily families[] = {
-    [FamilyMitsubishiAc] = {.name = "MITSUBISHI_AC"},
-    [FamilyMitsubishiHeavy] = {.name = "MHI"},
+    [FamilyMitsubishiAc] = {
+        .manufacturer = ManufacturerMitsubishiElectric,
+        .name = "MITSUBISHI_AC",
+    },
+    [FamilyMitsubishiHeavy] = {
+        .manufacturer = ManufacturerMitsubishiHeavy,
+        .name = "MHI",
+    },
 };
 
 enum {
