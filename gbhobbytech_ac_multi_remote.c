@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
+#include <gui/view_dispatcher.h>
+#include <gui/modules/text_input.h>
 #include <input/input.h>
 #include <storage/storage.h>
 #include <toolbox/path.h>
@@ -16,6 +18,9 @@
 #define OK_DOUBLE_CLICK_MS 300U
 #define PROFILE_DIRECTORY EXT_PATH("apps_data/gbhobbytech_ac_multi_remote")
 #define PROFILE_PATH_FORMAT PROFILE_DIRECTORY "/AC_Unit_%02u.ir"
+#define PROFILE_NAME_PATH_FORMAT PROFILE_DIRECTORY "/AC_Unit_%02u.name"
+#define PROFILE_NAME_LENGTH 16U
+#define RENAME_TEXT_VIEW_ID 1U
 #define MITSUBISHI_TEMP_MIN 16U
 #define MITSUBISHI_TEMP_MAX 31U
 #define MENU_VISIBLE_ROWS 3U
@@ -34,6 +39,9 @@ typedef enum {
 typedef enum {
     PageControl,
     PageSelectUnit,
+    PageEditUnit,
+    PageDeleteConfirm,
+    PageEditFailed,
     PageWizardMethod,
     PageWizardSelectBrand,
     PageNoBrandProtocols,
@@ -63,14 +71,21 @@ typedef struct {
     FuriMessageQueue* event_queue;
     FuriMutex* capture_mutex;
     ViewPort* view_port;
+    Gui* gui;
+    ViewDispatcher* rename_dispatcher;
+    TextInput* rename_text_input;
+    char rename_buffer[PROFILE_NAME_LENGTH + 1U];
+    bool rename_accepted;
     InfraredWorker* infrared_worker;
     InfraredSignal* capture_signal;
     InfraredSignal* normal_signal;
     KeypadMode mode;
     AppPage page;
     uint8_t profile_ids[MAX_PROFILES];
+    char profile_names[MAX_PROFILES][PROFILE_NAME_LENGTH + 1U];
     size_t profile_count;
     size_t selected_unit_index;
+    size_t edit_menu_index;
     size_t wizard_method_index;
     size_t selected_manufacturer_index;
     bool has_expected_variant;
@@ -350,8 +365,6 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
 }
 
 static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
-    char unit_text[32];
-
     draw_header(canvas, "SELECT UNIT");
     canvas_set_font(canvas, FontSecondary);
 
@@ -362,13 +375,12 @@ static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
         draw_double_ok_icon(canvas, 7, 59);
         canvas_draw_str(canvas, 22, 63, "CONTROL");
     } else if(state->selected_unit_index < state->profile_count) {
-        const unsigned profile_id = (unsigned)state->profile_ids[state->selected_unit_index];
-        snprintf(unit_text, sizeof(unit_text), "AC UNIT %02u", profile_id);
-        canvas_draw_str(canvas, 4, 37, unit_text);
+        canvas_draw_str(canvas, 4, 37, state->profile_names[state->selected_unit_index]);
 
         draw_fan_speed_arrows(canvas, 4, 52);
         canvas_draw_str(canvas, 18, 52, "CHANGE");
-        draw_hold_ok_hint(canvas, 63, 52, "USE");
+        draw_short_ok_hint(canvas, 55, 52, "USE");
+        draw_hold_ok_hint(canvas, 82, 52, "EDIT");
 
         draw_down_arrow(canvas, 8, 59);
         canvas_draw_str(canvas, 16, 63, "ADD");
@@ -497,6 +509,45 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
     case PageWizardSelectBrand:
         draw_header(canvas, "IDENTIFY UNIT BRAND");
         draw_wizard_menu(canvas, state);
+        break;
+    case PageEditUnit: {
+        draw_header(canvas, "EDIT UNIT");
+        if(state->selected_unit_index < state->profile_count) {
+            canvas_draw_str(canvas, 4, 34, state->profile_names[state->selected_unit_index]);
+        }
+        const char* const actions[] = {"RENAME", "DELETE"};
+        for(size_t i = 0U; i < 2U; i++) {
+            const int32_t baseline = 45 + (int32_t)i * 10;
+            if(i == state->edit_menu_index) {
+                canvas_draw_rbox(canvas, 2, baseline - 8, 120, 10, 1);
+                canvas_set_color(canvas, ColorWhite);
+                draw_str_bold(canvas, 5, baseline, actions[i]);
+                canvas_set_color(canvas, ColorBlack);
+            } else {
+                canvas_draw_str(canvas, 5, baseline, actions[i]);
+            }
+        }
+        draw_temp_arrows(canvas, 7, 59);
+        canvas_draw_str(canvas, 18, 63, "MOVE");
+        draw_short_ok_hint(canvas, 55, 63, "SELECT");
+        canvas_draw_str(canvas, 102, 63, "BACK");
+        break;
+    }
+    case PageDeleteConfirm:
+        draw_header(canvas, "DELETE UNIT?");
+        if(state->selected_unit_index < state->profile_count) {
+            canvas_draw_str(canvas, 4, 36, state->profile_names[state->selected_unit_index]);
+        }
+        canvas_draw_str(canvas, 4, 47, "Remove this saved unit?");
+        draw_left_arrow(canvas, 7, 57);
+        canvas_draw_str(canvas, 16, 61, "KEEP");
+        draw_right_arrow(canvas, 65, 57);
+        canvas_draw_str(canvas, 74, 61, "DELETE");
+        break;
+    case PageEditFailed:
+        draw_header(canvas, "EDIT FAILED");
+        canvas_draw_str(canvas, 4, 36, "Could not save changes.");
+        canvas_draw_str(canvas, 4, 48, "BACK: EDIT UNIT");
         break;
     case PageNoBrandProtocols:
         draw_header(canvas, "NO TESTS FOR BRAND YET");
@@ -632,6 +683,123 @@ static void build_profile_path(uint8_t profile_id, char* path, size_t path_size)
     snprintf(path, path_size, PROFILE_PATH_FORMAT, (unsigned)profile_id);
 }
 
+static void build_profile_name_path(uint8_t profile_id, char* path, size_t path_size) {
+    snprintf(path, path_size, PROFILE_NAME_PATH_FORMAT, (unsigned)profile_id);
+}
+
+static void load_profile_name(
+    Storage* storage,
+    uint8_t profile_id,
+    char* name,
+    size_t name_size) {
+    char path[96];
+    build_profile_name_path(profile_id, path, sizeof(path));
+    File* file = storage_file_alloc(storage);
+    const bool opened =
+        storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING);
+    size_t bytes_read = 0U;
+    if(opened && name_size > 1U) {
+        bytes_read = storage_file_read(file, name, name_size - 1U);
+    }
+    storage_file_close(file);
+    storage_file_free(file);
+
+    if(bytes_read == 0U) {
+        snprintf(name, name_size, "UNIT %02u", (unsigned)profile_id);
+    } else {
+        name[bytes_read] = '\0';
+    }
+}
+
+static bool save_profile_name(uint8_t profile_id, const char* name) {
+    char path[96];
+    build_profile_name_path(profile_id, path, sizeof(path));
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, PROFILE_DIRECTORY);
+    File* file = storage_file_alloc(storage);
+    const bool opened =
+        storage_file_open(file, path, FSAM_WRITE, FSOM_CREATE_ALWAYS);
+    const size_t name_length = strlen(name);
+    const bool success =
+        opened && name_length > 0U &&
+        storage_file_write(file, name, name_length) == name_length &&
+        storage_file_sync(file);
+    storage_file_close(file);
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+    return success;
+}
+
+static void rename_text_input_done(void* context) {
+    AcMultiRemoteState* state = context;
+    state->rename_accepted = true;
+    view_dispatcher_stop(state->rename_dispatcher);
+}
+
+static bool rename_text_input_back(void* context) {
+    AcMultiRemoteState* state = context;
+    state->rename_accepted = false;
+    view_dispatcher_stop(state->rename_dispatcher);
+    return true;
+}
+
+static bool prompt_profile_name(AcMultiRemoteState* state) {
+    if(state->selected_unit_index >= state->profile_count) return false;
+    const uint8_t profile_id = state->profile_ids[state->selected_unit_index];
+    snprintf(
+        state->rename_buffer,
+        sizeof(state->rename_buffer),
+        "%s",
+        state->profile_names[state->selected_unit_index]);
+    state->rename_accepted = false;
+
+    state->rename_text_input = text_input_alloc();
+    state->rename_dispatcher = view_dispatcher_alloc();
+    text_input_set_header_text(state->rename_text_input, "Rename AC unit");
+    text_input_set_minimum_length(state->rename_text_input, 1U);
+    text_input_set_result_callback(
+        state->rename_text_input,
+        rename_text_input_done,
+        state,
+        state->rename_buffer,
+        sizeof(state->rename_buffer),
+        false);
+    view_dispatcher_set_event_callback_context(state->rename_dispatcher, state);
+    view_dispatcher_set_navigation_event_callback(
+        state->rename_dispatcher, rename_text_input_back);
+    view_dispatcher_add_view(
+        state->rename_dispatcher,
+        RENAME_TEXT_VIEW_ID,
+        text_input_get_view(state->rename_text_input));
+
+    gui_remove_view_port(state->gui, state->view_port);
+    view_dispatcher_attach_to_gui(
+        state->rename_dispatcher, state->gui, ViewDispatcherTypeFullscreen);
+    view_dispatcher_switch_to_view(state->rename_dispatcher, RENAME_TEXT_VIEW_ID);
+    view_dispatcher_run(state->rename_dispatcher);
+
+    view_dispatcher_remove_view(state->rename_dispatcher, RENAME_TEXT_VIEW_ID);
+    view_dispatcher_free(state->rename_dispatcher);
+    text_input_free(state->rename_text_input);
+    state->rename_dispatcher = NULL;
+    state->rename_text_input = NULL;
+    gui_add_view_port(state->gui, state->view_port, GuiLayerFullscreen);
+    view_port_update(state->view_port);
+
+    if(!state->rename_accepted) return false;
+    if(!save_profile_name(profile_id, state->rename_buffer)) {
+        state->page = PageEditFailed;
+        return false;
+    }
+    snprintf(
+        state->profile_names[state->selected_unit_index],
+        sizeof(state->profile_names[state->selected_unit_index]),
+        "%s",
+        state->rename_buffer);
+    state->page = PageSelectUnit;
+    return true;
+}
+
 static bool profile_signal_exists(Storage* storage, const char* path, const char* signal_name) {
     bool found = false;
     FlipperFormat* format = flipper_format_file_alloc(storage);
@@ -659,7 +827,10 @@ static size_t load_profiles(AcMultiRemoteState* state) {
         if(storage_common_stat(storage, path, NULL) == FSE_OK &&
            profile_signal_exists(storage, path, "Normal") &&
            profile_signal_exists(storage, path, "Off")) {
-            state->profile_ids[count++] = id;
+            state->profile_ids[count] = id;
+            load_profile_name(
+                storage, id, state->profile_names[count], sizeof(state->profile_names[count]));
+            count++;
         }
     }
 
@@ -847,6 +1018,61 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
     }
 
     return false;
+}
+
+static bool delete_selected_profile(AcMultiRemoteState* state) {
+    if(state->selected_unit_index >= state->profile_count) return false;
+
+    const uint8_t profile_id = state->profile_ids[state->selected_unit_index];
+    const bool deleting_active = state->active_profile_id == profile_id;
+    char profile_path[96];
+    char name_path[96];
+    build_profile_path(profile_id, profile_path, sizeof(profile_path));
+    build_profile_name_path(profile_id, name_path, sizeof(name_path));
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    FS_Error name_status = storage_common_stat(storage, name_path, NULL);
+    bool success = true;
+    if(name_status == FSE_OK) {
+        success = storage_common_remove(storage, name_path) == FSE_OK;
+    } else if(name_status != FSE_NOT_EXIST) {
+        success = false;
+    }
+    if(success) {
+        success = storage_common_remove(storage, profile_path) == FSE_OK;
+    }
+    furi_record_close(RECORD_STORAGE);
+    if(!success) return false;
+
+    state->profile_count = load_profiles(state);
+    if(state->selected_unit_index >= state->profile_count && state->profile_count > 0U) {
+        state->selected_unit_index = state->profile_count - 1U;
+    }
+    if(state->profile_count == 0U) state->selected_unit_index = 0U;
+
+    if(deleting_active) {
+        if(state->profile_count > 0U) {
+            state->active_profile_id = state->profile_ids[0];
+            if(!load_profile_control_state(state, state->active_profile_id)) {
+                state->power_on = false;
+            }
+        } else {
+            state->active_profile_id = 0U;
+            state->state_control_supported = false;
+            state->mhi_supported = false;
+            state->power_on = false;
+        }
+    }
+
+    return true;
+}
+
+static void select_edit_menu_item(AcMultiRemoteState* state) {
+    if(state->edit_menu_index == 0U) {
+        prompt_profile_name(state);
+    } else {
+        state->page = PageDeleteConfirm;
+    }
 }
 
 static void cycle_active_unit(AcMultiRemoteState* state, bool next) {
@@ -1145,6 +1371,14 @@ static void choose_selected_unit(AcMultiRemoteState* state) {
     }
 }
 
+static void select_edit_menu_item(AcMultiRemoteState* state) {
+    if(state->edit_menu_index == 0U) {
+        prompt_profile_name(state);
+    } else {
+        state->page = PageDeleteConfirm;
+    }
+}
+
 static void handle_single_ok(AcMultiRemoteState* state) {
     switch(state->page) {
     case PageRoomProbe:
@@ -1178,6 +1412,14 @@ static void handle_single_ok(AcMultiRemoteState* state) {
     case PageSelectUnit:
         choose_selected_unit(state);
         break;
+    case PageEditUnit:
+        select_edit_menu_item(state);
+        break;
+    case PageEditFailed:
+        state->page = PageEditUnit;
+        break;
+    case PageDeleteConfirm:
+        break;
     case PageWizardMethod:
     case PageWizardSelectBrand:
         select_wizard_item(state);
@@ -1206,6 +1448,15 @@ static void handle_back(AcMultiRemoteState* state) {
         break;
     case PageSelectUnit:
         state->page = PageControl;
+        break;
+    case PageEditUnit:
+        state->page = PageSelectUnit;
+        break;
+    case PageDeleteConfirm:
+        state->page = PageEditUnit;
+        break;
+    case PageEditFailed:
+        state->page = PageEditUnit;
         break;
     case PageWizardMethod:
         state->page = PageSelectUnit;
@@ -1249,6 +1500,24 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
 
     if(event->key == InputKeyOk) {
         handle_single_ok(state);
+        return;
+    }
+
+    if(state->page == PageDeleteConfirm) {
+        if(event->key == InputKeyLeft) {
+            state->page = PageEditUnit;
+        } else if(event->key == InputKeyRight) {
+            state->page = delete_selected_profile(state) ?
+                              PageSelectUnit :
+                              PageEditFailed;
+        }
+        return;
+    }
+
+    if(state->page == PageEditUnit) {
+        if(event->key == InputKeyUp || event->key == InputKeyDown) {
+            state->edit_menu_index = 1U - state->edit_menu_index;
+        }
         return;
     }
 
@@ -1374,6 +1643,11 @@ static void handle_input_event(AcMultiRemoteState* state, const InputEvent* inpu
                 toggle_active_mode(state);
                 return;
             }
+        } else if(input->key == InputKeyOk && state->page == PageSelectUnit) {
+            if(state->profile_count > 0U) {
+                state->edit_menu_index = 0U;
+                state->page = PageEditUnit;
+            }
         } else if(input->key == InputKeyOk) {
             handle_single_ok(state);
         }
@@ -1421,6 +1695,7 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
     view_port_input_callback_set(view_port, input_callback, &state);
 
     Gui* gui = furi_record_open(RECORD_GUI);
+    state.gui = gui;
     gui_add_view_port(gui, view_port, GuiLayerFullscreen);
     view_port_update(view_port);
 
