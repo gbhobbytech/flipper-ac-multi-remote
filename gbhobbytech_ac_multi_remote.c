@@ -1068,14 +1068,6 @@ static bool delete_selected_profile(AcMultiRemoteState* state) {
     return true;
 }
 
-static void select_edit_menu_item(AcMultiRemoteState* state) {
-    if(state->edit_menu_index == 0U) {
-        prompt_profile_name(state);
-    } else {
-        state->page = PageDeleteConfirm;
-    }
-}
-
 static void cycle_active_unit(AcMultiRemoteState* state, bool next) {
     if(state->profile_count < 2U) return;
 
