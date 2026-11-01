@@ -1,5 +1,6 @@
 #include <furi.h>
 #include <stdio.h>
+#include <string.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <gui/view_dispatcher.h>
