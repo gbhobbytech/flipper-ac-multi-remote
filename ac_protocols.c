@@ -2,6 +2,9 @@
 #include "ac_mitsubishi.h"
 #include "ac_mhi.h"
 
+#define AC_PROBE_TEMP_C 24U
+#define AC_PROBE_DUTY_CYCLE INFRARED_COMMON_DUTY_CYCLE
+
 /* ---- Matchers (wrap the drivers' own decoders; no extra signatures) ---- */
 
 /* Fixed scratch space for matchers, so identification needs no heap and adds
@@ -30,6 +33,56 @@ static bool match_mitsubishi_heavy_88(const InfraredSignal* signal) {
 
 static bool match_mitsubishi_heavy_152(const InfraredSignal* signal) {
     return match_mitsubishi_heavy_variant(signal, AcMhiVariant152);
+}
+
+static bool build_mitsubishi_ac_probe(bool power_on, InfraredSignal* signal) {
+    uint8_t frame[AC_MITSUBISHI_FRAME_BYTES] = {
+        0x23U, 0xCBU, 0x26U, 0x01U, 0x00U,
+    };
+    uint32_t timings[AC_MITSUBISHI_RAW_MAX];
+    size_t timings_count = 0U;
+
+    frame[5] = power_on ? 0x20U : 0x00U;
+    frame[6] = (uint8_t)(3U << 3); /* Cool */
+    frame[7] = (uint8_t)(AC_PROBE_TEMP_C - 16U);
+    frame[8] = 6U; /* Cool setpoint encoding */
+    frame[9] = 0x80U; /* Fan auto */
+    ac_mitsubishi_update_checksum(frame);
+
+    if(!ac_mitsubishi_build_signal(
+           frame, NULL, 0U, timings, AC_MITSUBISHI_RAW_MAX, &timings_count)) {
+        return false;
+    }
+    infrared_signal_set_raw_signal(
+        signal, timings, timings_count, 38000U, AC_PROBE_DUTY_CYCLE);
+    return true;
+}
+
+static bool build_mhi_probe(
+    AcMhiVariant variant,
+    bool power_on,
+    InfraredSignal* signal) {
+    uint8_t state[AC_MHI_MAX_STATE_BYTES];
+    uint32_t timings[AC_MHI_MAX_RAW_TIMINGS];
+    size_t timings_count = 0U;
+
+    if(!ac_mhi_build_state(
+           variant, power_on, AC_PROBE_TEMP_C, AcMhiModeCool, 0U, state) ||
+       !ac_mhi_build_raw_timings(
+           variant, state, timings, AC_MHI_MAX_RAW_TIMINGS, &timings_count)) {
+        return false;
+    }
+    infrared_signal_set_raw_signal(
+        signal, timings, timings_count, 38000U, AC_PROBE_DUTY_CYCLE);
+    return true;
+}
+
+static bool build_mhi_88_probe(bool power_on, InfraredSignal* signal) {
+    return build_mhi_probe(AcMhiVariant88, power_on, signal);
+}
+
+static bool build_mhi_152_probe(bool power_on, InfraredSignal* signal) {
+    return build_mhi_probe(AcMhiVariant152, power_on, signal);
 }
 
 /* ---- Catalogue ---- */
@@ -66,21 +119,27 @@ static const AcProtocolVariant variants[] = {
             .family = FamilyMitsubishiAc,
             .name = "144-BIT",
             .supports_state_control = true,
+            .supports_room_probe = true,
             .matches = match_mitsubishi_ac_144,
+            .build_probe_signal = build_mitsubishi_ac_probe,
         },
     [VariantMitsubishiHeavy88] =
         {
             .family = FamilyMitsubishiHeavy,
             .name = "88-BIT",
             .supports_state_control = false,
+            .supports_room_probe = true,
             .matches = match_mitsubishi_heavy_88,
+            .build_probe_signal = build_mhi_88_probe,
         },
     [VariantMitsubishiHeavy152] =
         {
             .family = FamilyMitsubishiHeavy,
             .name = "152-BIT",
             .supports_state_control = false,
+            .supports_room_probe = true,
             .matches = match_mitsubishi_heavy_152,
+            .build_probe_signal = build_mhi_152_probe,
         },
 };
 
