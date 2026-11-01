@@ -81,8 +81,12 @@ static void app_request_redraw(AcMultiRemoteState* state) {
 static void input_callback(InputEvent* input, void* context) {
     AcMultiRemoteState* state = context;
 
-    if(input->type == InputTypeShort ||
-       (input->type == InputTypeLong && input->key == InputKeyOk)) {
+    const bool long_action =
+        input->type == InputTypeLong &&
+        (input->key == InputKeyOk || input->key == InputKeyLeft ||
+         input->key == InputKeyRight);
+
+    if(input->type == InputTypeShort || long_action) {
         AppEvent event = {
             .type = AppEventTypeInput,
             .input = *input,
@@ -131,28 +135,61 @@ static void draw_header(Canvas* canvas, const char* heading) {
     canvas_draw_line(canvas, 4, 23, 123, 23);
 }
 
+/* Side-by-side left/right arrows, centred on a text baseline. */
+static void draw_fan_speed_arrows(Canvas* canvas, int32_t x, int32_t text_baseline_y) {
+    const int32_t cy = text_baseline_y - 4;
+
+    /* Left arrow. */
+    canvas_draw_line(canvas, x + 2, cy, x + 5, cy);
+    canvas_draw_line(canvas, x + 2, cy, x + 4, cy - 2);
+    canvas_draw_line(canvas, x + 2, cy, x + 4, cy + 2);
+
+    /* Right arrow. */
+    canvas_draw_line(canvas, x + 7, cy, x + 10, cy);
+    canvas_draw_line(canvas, x + 8, cy - 2, x + 10, cy);
+    canvas_draw_line(canvas, x + 8, cy + 2, x + 10, cy);
+}
+
+/* Temperature up/down arrows below the temperature. */
+static void draw_temp_arrows(Canvas* canvas, int32_t x, int32_t cy) {
+    const int32_t up_x = x;
+    const int32_t down_x = x + 7;
+
+    canvas_draw_line(canvas, up_x, cy + 2, up_x, cy - 2);
+    canvas_draw_line(canvas, up_x, cy - 2, up_x - 2, cy);
+    canvas_draw_line(canvas, up_x, cy - 2, up_x + 2, cy);
+
+    canvas_draw_line(canvas, down_x, cy - 2, down_x, cy + 2);
+    canvas_draw_line(canvas, down_x, cy + 2, down_x - 2, cy);
+    canvas_draw_line(canvas, down_x, cy + 2, down_x + 2, cy);
+}
+
+/* Short OK press: power. */
+static void draw_power_short_icon(Canvas* canvas, int32_t cx, int32_t cy) {
+    canvas_draw_disc(canvas, cx, cy, 2);
+}
+
+/* Long OK press: mode. */
+static void draw_mode_hold_icon(Canvas* canvas, int32_t cx, int32_t cy) {
+    canvas_draw_circle(canvas, cx, cy, 3);
+    canvas_draw_disc(canvas, cx, cy, 1);
+}
+
+/* Double-click OK: open the unit list. */
+static void draw_double_ok_icon(Canvas* canvas, int32_t cx, int32_t cy) {
+    canvas_draw_circle(canvas, cx, cy, 2);
+    canvas_draw_circle(canvas, cx + 6, cy, 2);
+}
+
 static void draw_control_key_hints(Canvas* canvas) {
     canvas_set_font(canvas, FontSecondary);
 
-    /* Up and down arrows for temperature. */
-    canvas_draw_line(canvas, 6, 62, 6, 57);
-    canvas_draw_line(canvas, 4, 59, 6, 57);
-    canvas_draw_line(canvas, 8, 59, 6, 57);
-    canvas_draw_line(canvas, 12, 57, 12, 62);
-    canvas_draw_line(canvas, 10, 60, 12, 62);
-    canvas_draw_line(canvas, 14, 60, 12, 62);
-    canvas_draw_str(canvas, 17, 63, "TEMP");
-
-    /* Left and right arrows for fan speed. */
-    canvas_draw_line(canvas, 51, 60, 46, 60);
-    canvas_draw_line(canvas, 46, 60, 48, 58);
-    canvas_draw_line(canvas, 46, 60, 48, 62);
-    canvas_draw_line(canvas, 55, 60, 60, 60);
-    canvas_draw_line(canvas, 60, 60, 58, 58);
-    canvas_draw_line(canvas, 60, 60, 58, 62);
-    canvas_draw_str(canvas, 64, 63, "FAN");
-
-    canvas_draw_str(canvas, 89, 63, "OK POWER");
+    draw_temp_arrows(canvas, 9, 59);
+    canvas_draw_str(canvas, 24, 63, "HOLD");
+    draw_fan_speed_arrows(canvas, 44, 63);
+    canvas_draw_str(canvas, 57, 63, "UNIT");
+    draw_double_ok_icon(canvas, 82, 59);
+    canvas_draw_str(canvas, 94, 63, "LIST");
 }
 
 static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state) {
@@ -171,63 +208,81 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
         else if(mode_code == 4U) mode_name = "AUTO";
         else if(mode_code == 7U) mode_name = "FAN";
 
-        snprintf(profile_text, sizeof(profile_text), "UNIT %02u", (unsigned)state->active_profile_id);
-        snprintf(temperature_text, sizeof(temperature_text), "%u", (unsigned)state->temperature_c);
-        snprintf(power_text, sizeof(power_text), "%s", state->power_on ? "ON" : "OFF");
-        snprintf(fan_text, sizeof(fan_text), "%s", fan_speed_names[state->fan_speed]);
+        snprintf(profile_text, sizeof(profile_text), "UNIT %02u",
+                 (unsigned)state->active_profile_id);
+        snprintf(temperature_text, sizeof(temperature_text), "%u",
+                 (unsigned)state->temperature_c);
+        snprintf(power_text, sizeof(power_text), "%s",
+                 state->power_on ? "ON" : "OFF");
+        snprintf(fan_text, sizeof(fan_text), "%s",
+                 fan_speed_names[state->fan_speed]);
         snprintf(mode_text, sizeof(mode_text), "%s", mode_name);
 
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 4, 9, "AC MULTI REMOTE");
         canvas_draw_str(canvas, 96, 9, profile_text);
         canvas_draw_line(canvas, 4, 13, 123, 13);
-        canvas_draw_str(canvas, 4, 22, "HOLD OK: MODE");
-        canvas_draw_line(canvas, 4, 25, 123, 25);
 
         canvas_set_font(canvas, FontBigNumbers);
         canvas_draw_str(canvas, 4, 48, temperature_text);
+
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 30, 34, "\u00b0C");
+        canvas_draw_str(canvas, 42, 32, "MODE");
+        canvas_draw_str(canvas, 42, 41, "POWER");
+        canvas_draw_str(canvas, 42, 50, "FAN");
 
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 52, 32, "MODE");
-        canvas_draw_str(canvas, 52, 41, "POWER");
-        canvas_draw_str(canvas, 52, 50, "FAN");
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 88, 32, mode_text);
-        canvas_draw_str(canvas, 88, 41, power_text);
-        canvas_draw_str(canvas, 88, 50, fan_text);
+        canvas_draw_str(canvas, 78, 32, mode_text);
+        draw_mode_hold_icon(canvas, 122, 28);
+
+        canvas_draw_str(canvas, 78, 41, power_text);
+        draw_power_short_icon(canvas, 122, 37);
+
+        canvas_draw_str(canvas, 78, 50, fan_text);
+        const int32_t fan_arrows_x =
+            78 + (int32_t)canvas_string_width(canvas, fan_text) + 2;
+        draw_fan_speed_arrows(canvas, fan_arrows_x, 50);
 
         canvas_draw_line(canvas, 4, 54, 123, 54);
-        canvas_set_font(canvas, FontSecondary);
         draw_control_key_hints(canvas);
     } else {
         draw_header(canvas, "CONTROL / 2xOK: UNITS");
 
         if(state->active_profile_id) {
-            snprintf(profile_text, sizeof(profile_text), "AC UNIT %02u: LEARNED", (unsigned)state->active_profile_id);
+            snprintf(profile_text, sizeof(profile_text), "AC UNIT %02u: LEARNED",
+                     (unsigned)state->active_profile_id);
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 4, 33, profile_text);
-            snprintf(power_text, sizeof(power_text), "POWER  %s", state->power_on ? "ON*" : "OFF*");
+
+            snprintf(power_text, sizeof(power_text), "POWER  %s",
+                     state->power_on ? "ON*" : "OFF*");
             canvas_set_font(canvas, FontPrimary);
             canvas_draw_str(canvas, 4, 46, power_text);
+
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 4, 56, "TEMP/FAN NOT LEARNED");
         } else {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 4, 33, "NO PROFILE - PREVIEW");
-            snprintf(temperature_text, sizeof(temperature_text), "TEMP  %u C", (unsigned)state->temperature_c);
-            snprintf(power_text, sizeof(power_text), "POWER  %s", state->preview_power_on ? "ON" : "OFF");
-            snprintf(fan_text, sizeof(fan_text), "FAN  %s", fan_speed_names[state->fan_speed]);
+
+            snprintf(temperature_text, sizeof(temperature_text), "TEMP  %u C",
+                     (unsigned)state->temperature_c);
+            snprintf(power_text, sizeof(power_text), "POWER  %s",
+                     state->preview_power_on ? "ON" : "OFF");
+            snprintf(fan_text, sizeof(fan_text), "FAN  %s",
+                     fan_speed_names[state->fan_speed]);
 
             canvas_set_font(canvas, FontPrimary);
             canvas_draw_str(canvas, 4, 46, temperature_text);
+
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 4, 55, power_text);
             canvas_draw_str(canvas, 70, 55, fan_text);
         }
     }
 }
+
 static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
     char unit_text[32];
 
@@ -477,6 +532,32 @@ static bool load_mitsubishi_profile_state(AcMultiRemoteState* state, uint8_t pro
     }
 
     return decoded;
+}
+
+static void cycle_active_unit(AcMultiRemoteState* state, bool next) {
+    if(state->profile_count < 2U) return;
+
+    size_t current_index = state->profile_count;
+    for(size_t i = 0; i < state->profile_count; i++) {
+        if(state->profile_ids[i] == state->active_profile_id) {
+            current_index = i;
+            break;
+        }
+    }
+
+    if(current_index == state->profile_count) current_index = 0;
+
+    const size_t next_index = next ?
+                                  (current_index + 1U) % state->profile_count :
+                                  (current_index == 0U ? state->profile_count - 1U :
+                                                         current_index - 1U);
+
+    state->selected_unit_index = next_index;
+    state->active_profile_id = state->profile_ids[next_index];
+
+    if(!load_mitsubishi_profile_state(state, state->active_profile_id)) {
+        state->power_on = false;
+    }
 }
 
 static bool transmit_mitsubishi_state(AcMultiRemoteState* state) {
@@ -741,9 +822,25 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
 }
 
 static void handle_input_event(AcMultiRemoteState* state, const InputEvent* input) {
-    if(input->key == InputKeyOk && input->type == InputTypeLong &&
-       state->page == PageControl && state->mitsubishi_supported) {
-        toggle_mitsubishi_mode(state);
+    if(input->type == InputTypeLong) {
+        if(state->page == PageControl) {
+            if(input->key == InputKeyLeft) {
+                cycle_active_unit(state, false);
+                return;
+            }
+            if(input->key == InputKeyRight) {
+                cycle_active_unit(state, true);
+                return;
+            }
+            if(input->key == InputKeyOk && state->mitsubishi_supported) {
+                toggle_mitsubishi_mode(state);
+                return;
+            }
+        } else if(input->key == InputKeyOk &&
+                  state->page != PageSelectUnit) {
+            handle_single_ok(state);
+        }
+
         return;
     }
 
@@ -817,7 +914,14 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
                     if(state.page == PageControl) {
                         state.page = PageSelectUnit;
                         state.mode = KeypadModeSelectUnit;
-                        state.selected_unit_index = 0;
+                        state.selected_unit_index =
+                            (state.profile_count < MAX_PROFILES) ? state.profile_count : 0;
+                        for(size_t i = 0; i < state.profile_count; i++) {
+                            if(state.profile_ids[i] == state.active_profile_id) {
+                                state.selected_unit_index = i;
+                                break;
+                            }
+                        }
                     } else {
                         state.page = PageControl;
                         state.mode = KeypadModeControl;
