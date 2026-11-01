@@ -1306,7 +1306,7 @@ static void handle_back(AcMultiRemoteState* state) {
         state->page = PageWizardMethod;
         break;
     case PageRoomProbeQuestion:
-        state->page = PageRoomProbe;
+        state->page = PageWizardMethod;
         break;
     case PageRoomProbeSaved:
         state->page = PageControl;
