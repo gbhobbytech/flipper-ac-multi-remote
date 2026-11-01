@@ -18,19 +18,16 @@ When the Normal capture contains a valid Mitsubishi Electric 144-bit state frame
 
 ### Adding a unit: identification wizard
 
-From **Select Unit**, press Down to add a unit. The wizard offers four routes:
+From **Select Unit**, press Down to add a unit. The wizard starts with two choices:
 
-- **Try in room (no remote):** sends one generated test state for each variant with a room-probe builder, in catalogue order. The current candidates are Mitsubishi Electric 144-bit, MHI 88-bit, and MHI 152-bit. Each sends **On, Cool, 24 °C, Auto fan**. Confirm a beep or start to save generated On/Off states; if there is no response, the wizard advances to the next variant.
-- **Remote model code:** pick the brand on the indoor unit, then the code printed on the back of the original remote. The app shows the protocol family and variant for that remote, then learns Normal and Off.
-- **Capture remote:** press TEMP + on the original remote. The app compares the capture against the protocol matchers it implements and reports a match, no match, or an ambiguous match.
-- **Learn only (replay):** skip identification and learn Normal/Off for replay.
+- **Identify Unit:** choose the brand printed on the indoor unit, then try only the in-room protocols registered for that manufacturer. Before each test, the app explains the command it will send. The user confirms **Yes** if the unit responds or **No** to try the next protocol. Choosing **Not sure: try all** tests every in-room protocol currently available in the catalogue.
+- **Learn Remote:** capture the unit's normal On state and its Off state, then save them for replay.
 
-Every list ends with **Not listed: capture**. When a capture is not recognised or is ambiguous, the wizard says so and offers the learn-only fallback. After saving, the app reports whether the learned Normal signal decoded as a supported protocol, and warns if it does not match the protocol chosen in the wizard.
+The current in-room trials support Mitsubishi Electric 144-bit and Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit. Fujitsu and Gree are listed as brands, but do not yet have in-room test protocols; selecting either guides the user to Learn Remote. If all tests for a selected brand fail, the wizard offers Learn Remote as the fallback. Confirming a successful test saves the unit and returns to the control screen.
 
-Brands, remote codes and variants live in `ac_protocols.c`. They are kept as separate records (manufacturer, protocol family, protocol variant, remote entry). Mitsubishi Electric and Mitsubishi Heavy Industries are separate manufacturers with unrelated protocols.
+Brands, protocol families, variants, and remote-code references live in `ac_protocols.c`. Protocol families are linked to their manufacturer so the wizard can filter tests by brand. Mitsubishi Electric and Mitsubishi Heavy Industries are separate manufacturers with unrelated protocols. Fujitsu and Gree are present in the brand list while their protocol support is still being researched and added.
 
-Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit captures can be identified from their raw signal signatures. The bundled `ac_mhi.c` module builds complete frames and raw timings for both variants, and the in-room wizard uses it to send test states. Confirmed MHI profiles now use the main screen's direct power, temperature, mode and fan controls. This MHI transmit and control path still needs testing on a real unit. The listed remote-code mappings are reference leads and have not yet been verified against a physical unit; the wizard marks those mappings for verification.
-
+Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit captures can be identified from their raw signal signatures. The bundled `ac_mhi.c` module builds complete frames and raw timings for both variants, and confirmed MHI profiles use the main screen's direct power, temperature, mode, and fan controls. The user has confirmed the MHI update works on a local unit. The listed MHI remote-code mappings remain reference leads and have not been verified against a physical remote; they are not part of the current setup flow.
 For other raw profiles, the app continues to replay the learned Normal and Off signals and shows that temperature and fan are not decoded. Without a saved profile, the screen remains in preview mode.
 
 ## Build
