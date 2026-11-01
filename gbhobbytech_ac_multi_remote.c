@@ -8,6 +8,7 @@
 #include <infrared/worker/infrared_worker.h>
 #include <lib/infrared/signal/infrared_signal.h>
 #include "ac_mitsubishi.h"
+#include "ac_mhi.h"
 #include "ac_protocols.h"
 
 #define EVENT_QUEUE_SIZE 12U
@@ -35,6 +36,10 @@ typedef enum {
     PageIdentifyPrompt,
     PageIdentifyListen,
     PageIdentifyResult,
+    PageRoomProbe,
+    PageRoomProbeQuestion,
+    PageRoomProbeSaved,
+    PageRoomProbeFailed,
     PageLearnNormal,
     PageListenNormal,
     PageLearnOff,
@@ -75,6 +80,9 @@ typedef struct {
     size_t identify_matches[AC_IDENTIFY_MAX_MATCHES];
     size_t identify_match_count;
     size_t identify_selection;
+    size_t room_probe_variants[AC_IDENTIFY_MAX_MATCHES];
+    size_t room_probe_count;
+    size_t room_probe_position;
     bool identify_narrowing; /* Next capture narrows the current candidates. */
     bool identify_conflict;  /* Narrowing capture shared no candidates. */
     AcIdentifyResult learned_result;
@@ -97,14 +105,16 @@ typedef struct {
 
 static const char* const fan_speed_names[] = {"AUTO", "LOW", "MED", "HIGH", "MAX"};
 static const char* const wizard_method_names[] = {
+    "TRY IN ROOM (NO REMOTE)",
     "REMOTE MODEL CODE",
     "CAPTURE REMOTE",
     "LEARN ONLY (REPLAY)",
 };
 #define WIZARD_METHOD_COUNT (sizeof(wizard_method_names) / sizeof(wizard_method_names[0]))
-#define WIZARD_METHOD_REMOTE_CODE 0U
-#define WIZARD_METHOD_CAPTURE 1U
-#define WIZARD_METHOD_LEARN_ONLY 2U
+#define WIZARD_METHOD_ROOM_PROBE 0U
+#define WIZARD_METHOD_REMOTE_CODE 1U
+#define WIZARD_METHOD_CAPTURE 2U
+#define WIZARD_METHOD_LEARN_ONLY 3U
 #define FAN_SPEED_COUNT (sizeof(fan_speed_names) / sizeof(fan_speed_names[0]))
 
 static void app_request_redraw(AcMultiRemoteState* state) {
@@ -559,6 +569,42 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         }
         canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
         break;
+    case PageRoomProbe: {
+        const size_t variant_index =
+            state->room_probe_variants[state->room_probe_position];
+        draw_header(canvas, "TRY PROTOCOL IN ROOM");
+        draw_variant_name(canvas, 4, 34, variant_index);
+        canvas_draw_str(canvas, 4, 45, "Sends ON: COOL 24C AUTO");
+        canvas_draw_str(canvas, 4, 55, "Aim at unit, OK: SEND");
+        canvas_draw_str(canvas, 4, 63, "BACK: CANCEL");
+        break;
+    }
+    case PageRoomProbeQuestion:
+        draw_header(canvas, "CHECK THE UNIT");
+        canvas_draw_str(canvas, 4, 36, "Did it beep or start?");
+        canvas_draw_str(canvas, 4, 48, "LEFT: NO   RIGHT: YES");
+        canvas_draw_str(canvas, 4, 61, "BACK: CANCEL");
+        break;
+    case PageRoomProbeSaved:
+        draw_header(canvas, "PROTOCOL CONFIRMED");
+        draw_variant_name(canvas, 4, 36, state->expected_variant);
+        canvas_draw_str(canvas, 4, 48, "Unit responded.");
+        const AcProtocolVariant* variant = ac_variant_get(state->expected_variant);
+        canvas_draw_str(
+            canvas,
+            4,
+            58,
+            (variant && variant->supports_state_control) ?
+                "DIRECT CONTROL READY" :
+                "POWER REPLAY READY");
+        canvas_draw_str(canvas, 4, 63, "OK: CONTROL");
+        break;
+    case PageRoomProbeFailed:
+        draw_header(canvas, "NO TEST RESPONDED");
+        canvas_draw_str(canvas, 4, 36, "Try with original remote?");
+        canvas_draw_str(canvas, 4, 48, "OK: CAPTURE SIGNALS");
+        canvas_draw_str(canvas, 4, 59, "DOWN: LEARN ONLY");
+        break;
     case PageIdentifyResult:
         if(state->identify_result == AcIdentifyMatch) {
             const AcProtocolVariant* variant =
@@ -1000,6 +1046,8 @@ static void capture_completed(AcMultiRemoteState* state) {
 
 static void begin_new_profile(AcMultiRemoteState* state) {
     state->pending_profile_id = find_free_profile_id();
+    state->room_probe_count = 0U;
+    state->room_probe_position = 0U;
     state->wizard_method_index = 0;
     state->selected_manufacturer_index = 0;
     state->selected_remote_index = 0;
@@ -1017,6 +1065,66 @@ static void begin_new_profile(AcMultiRemoteState* state) {
     } else {
         state->page = PageWizardMethod;
     }
+}
+
+static void start_room_probe(AcMultiRemoteState* state) {
+    state->room_probe_count = 0U;
+    state->room_probe_position = 0U;
+    for(size_t i = 0; i < ac_variant_count(); i++) {
+        const AcProtocolVariant* variant = ac_variant_get(i);
+        if(variant && variant->supports_room_probe && variant->build_probe_signal &&
+           state->room_probe_count < AC_IDENTIFY_MAX_MATCHES) {
+            state->room_probe_variants[state->room_probe_count++] = i;
+        }
+    }
+
+    state->page = state->room_probe_count ? PageRoomProbe : PageRoomProbeFailed;
+}
+
+static bool transmit_room_probe(AcMultiRemoteState* state) {
+    if(state->room_probe_position >= state->room_probe_count) return false;
+    const AcProtocolVariant* variant =
+        ac_variant_get(state->room_probe_variants[state->room_probe_position]);
+    if(!variant || !variant->build_probe_signal) return false;
+
+    InfraredSignal* signal = infrared_signal_alloc();
+    const bool built = variant->build_probe_signal(true, signal);
+    if(built) infrared_signal_transmit(signal);
+    infrared_signal_free(signal);
+    return built;
+}
+
+static bool save_room_probe_profile(AcMultiRemoteState* state) {
+    if(state->room_probe_position >= state->room_probe_count) return false;
+    const size_t variant_index = state->room_probe_variants[state->room_probe_position];
+    const AcProtocolVariant* variant = ac_variant_get(variant_index);
+    if(!variant || !variant->build_probe_signal ||
+       !variant->build_probe_signal(true, state->normal_signal) ||
+       !variant->build_probe_signal(false, state->capture_signal) ||
+       !save_new_profile(state)) {
+        return false;
+    }
+
+    state->expected_variant = variant_index;
+    state->has_expected_variant = true;
+    state->learned_result = ac_identify_signal(
+        state->normal_signal, state->learned_matches, &state->learned_match_count);
+    state->profile_count = load_profiles(state);
+    state->active_profile_id = state->pending_profile_id;
+    state->power_on = true;
+    state->mitsubishi_supported = false;
+    if(!load_mitsubishi_profile_state(state, state->active_profile_id)) {
+        state->power_on = true;
+    }
+    state->page = PageRoomProbeSaved;
+    return true;
+}
+
+static void room_probe_rejected(AcMultiRemoteState* state) {
+    state->room_probe_position++;
+    state->page = (state->room_probe_position < state->room_probe_count) ?
+                      PageRoomProbe :
+                      PageRoomProbeFailed;
 }
 
 static void open_identify_prompt(AcMultiRemoteState* state) {
@@ -1045,7 +1153,9 @@ static void select_wizard_item(AcMultiRemoteState* state) {
 
     switch(state->page) {
     case PageWizardMethod:
-        if(selected == WIZARD_METHOD_REMOTE_CODE) {
+        if(selected == WIZARD_METHOD_ROOM_PROBE) {
+            start_room_probe(state);
+        } else if(selected == WIZARD_METHOD_REMOTE_CODE) {
             state->selected_manufacturer_index = 0;
             state->page = PageWizardSelectBrand;
         } else if(selected == WIZARD_METHOD_CAPTURE) {
@@ -1110,6 +1220,21 @@ static void choose_selected_unit(AcMultiRemoteState* state) {
 
 static void handle_single_ok(AcMultiRemoteState* state) {
     switch(state->page) {
+    case PageRoomProbe:
+        if(transmit_room_probe(state)) {
+            state->page = PageRoomProbeQuestion;
+        } else {
+            state->page = PageRoomProbeFailed;
+        }
+        break;
+    case PageRoomProbeQuestion:
+        break;
+    case PageRoomProbeSaved:
+        state->page = PageControl;
+        break;
+    case PageRoomProbeFailed:
+        open_identify_prompt(state);
+        break;
     case PageControl:
         if(state->active_profile_id && state->mitsubishi_supported) {
             update_mitsubishi_power(state, !state->power_on);
@@ -1177,6 +1302,18 @@ static void handle_back(AcMultiRemoteState* state) {
     case PageWizardMethod:
         state->page = PageSelectUnit;
         break;
+    case PageRoomProbe:
+        state->page = PageWizardMethod;
+        break;
+    case PageRoomProbeQuestion:
+        state->page = PageRoomProbe;
+        break;
+    case PageRoomProbeSaved:
+        state->page = PageControl;
+        break;
+    case PageRoomProbeFailed:
+        state->page = PageWizardMethod;
+        break;
     case PageWizardSelectBrand:
         state->page = PageWizardMethod;
         break;
@@ -1226,6 +1363,22 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
 
     if(event->key == InputKeyOk) {
         handle_single_ok(state);
+        return;
+    }
+
+    if(state->page == PageRoomProbeQuestion) {
+        if(event->key == InputKeyLeft) {
+            room_probe_rejected(state);
+        } else if(event->key == InputKeyRight) {
+            state->page = save_room_probe_profile(state) ?
+                              PageRoomProbeSaved :
+                              PageLearnFailed;
+        }
+        return;
+    }
+
+    if(state->page == PageRoomProbeFailed && event->key == InputKeyDown) {
+        open_learn_only(state);
         return;
     }
 
