@@ -26,6 +26,8 @@ typedef enum {
 typedef enum {
     PageControl,
     PageSelectUnit,
+    PageWizardIdentifyBrand,
+    PageWizardSelectBrand,
     PageLearnNormal,
     PageListenNormal,
     PageLearnOff,
@@ -56,6 +58,8 @@ typedef struct {
     uint8_t profile_ids[MAX_PROFILES];
     size_t profile_count;
     size_t selected_unit_index;
+    size_t selected_manufacturer_index;
+    bool manufacturer_known;
     uint8_t active_profile_id;
     uint8_t pending_profile_id;
     uint8_t temperature_c;
@@ -72,6 +76,8 @@ typedef struct {
 } AcMultiRemoteState;
 
 static const char* const fan_speed_names[] = {"AUTO", "LOW", "MED", "HIGH", "MAX"};
+static const char* const manufacturer_names[] = {"MITSUBISHI ELECTRIC"};
+#define MANUFACTURER_COUNT (sizeof(manufacturer_names) / sizeof(manufacturer_names[0]))
 #define FAN_SPEED_COUNT (sizeof(fan_speed_names) / sizeof(fan_speed_names[0]))
 
 static void app_request_redraw(AcMultiRemoteState* state) {
@@ -288,16 +294,14 @@ static void draw_unit_screen(Canvas* canvas, const AcMultiRemoteState* state) {
     canvas_set_font(canvas, FontSecondary);
 
     if(state->profile_count == 0) {
-        canvas_draw_str(canvas, 4, 37, "No remote profiles saved");
-        canvas_draw_str(canvas, 4, 51, "OK: ADD REMOTE");
+        canvas_draw_str(canvas, 4, 37, "NO SAVED UNITS");
+        canvas_draw_str(canvas, 4, 51, "DOWN: ADD UNIT");
     } else if(state->selected_unit_index < state->profile_count) {
         const unsigned profile_id = (unsigned)state->profile_ids[state->selected_unit_index];
         snprintf(unit_text, sizeof(unit_text), "AC UNIT %02u", profile_id);
         canvas_draw_str(canvas, 4, 37, unit_text);
-        canvas_draw_str(canvas, 4, 51, "< / > SELECT   OK: USE");
-    } else {
-        canvas_draw_str(canvas, 4, 37, "Add a new remote");
-        canvas_draw_str(canvas, 4, 51, "< / > SELECT   OK: ADD");
+        canvas_draw_str(canvas, 4, 51, "< / > CHANGE  OK: USE");
+        canvas_draw_str(canvas, 4, 62, "DOWN: ADD UNIT");
     }
 }
 
@@ -305,6 +309,22 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
     canvas_set_font(canvas, FontSecondary);
 
     switch(state->page) {
+    case PageWizardIdentifyBrand:
+        draw_header(canvas, "ADD UNIT");
+        canvas_draw_str(canvas, 4, 35, "Can you identify the");
+        canvas_draw_str(canvas, 4, 45, "manufacturer?");
+        canvas_draw_str(canvas, 4, 58,
+                         state->manufacturer_known ? "< NO   YES >" : "< NO*  YES >");
+        break;
+    case PageWizardSelectBrand: {
+        draw_header(canvas, "SELECT BRAND");
+        canvas_draw_str(canvas, 4, 35, "Supported protocol:");
+        const char* manufacturer =
+            manufacturer_names[state->selected_manufacturer_index % MANUFACTURER_COUNT];
+        canvas_draw_str(canvas, 4, 47, manufacturer);
+        canvas_draw_str(canvas, 4, 59, "< / > CHANGE   OK: USE");
+        break;
+    }
     case PageLearnNormal:
         draw_header(canvas, "LEARN NORMAL STATE");
         canvas_draw_str(canvas, 4, 34, "Set the AC to usual settings.");
@@ -651,10 +671,12 @@ static void capture_completed(AcMultiRemoteState* state) {
 
 static void begin_new_profile(AcMultiRemoteState* state) {
     state->pending_profile_id = find_free_profile_id();
+    state->manufacturer_known = false;
+    state->selected_manufacturer_index = 0;
     if(state->pending_profile_id == 0) {
         state->page = PageLearnFailed;
     } else {
-        state->page = PageLearnNormal;
+        state->page = PageWizardIdentifyBrand;
     }
 }
 
@@ -665,8 +687,6 @@ static void choose_selected_unit(AcMultiRemoteState* state) {
             state->power_on = false;
         }
         state->page = PageControl;
-    } else {
-        begin_new_profile(state);
     }
 }
 
@@ -686,6 +706,12 @@ static void handle_single_ok(AcMultiRemoteState* state) {
         break;
     case PageSelectUnit:
         choose_selected_unit(state);
+        break;
+    case PageWizardIdentifyBrand:
+        state->page = state->manufacturer_known ? PageWizardSelectBrand : PageLearnNormal;
+        break;
+    case PageWizardSelectBrand:
+        state->page = PageLearnNormal;
         break;
     case PageLearnNormal:
         start_capture(state, false);
@@ -711,6 +737,12 @@ static void handle_back(AcMultiRemoteState* state) {
         break;
     case PageSelectUnit:
         state->page = PageControl;
+        break;
+    case PageWizardIdentifyBrand:
+        state->page = PageSelectUnit;
+        break;
+    case PageWizardSelectBrand:
+        state->page = PageWizardIdentifyBrand;
         break;
     case PageListenNormal:
         stop_capture(state);
@@ -809,12 +841,28 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
             break;
         }
     } else if(state->page == PageSelectUnit) {
-        const size_t choices = state->profile_count + ((state->profile_count < MAX_PROFILES) ? 1U : 0U);
-        if(choices > 0 && event->key == InputKeyRight) {
-            state->selected_unit_index = (state->selected_unit_index + 1U) % choices;
-        } else if(choices > 0 && event->key == InputKeyLeft) {
+        if(event->key == InputKeyDown) {
+            begin_new_profile(state);
+        } else if(state->profile_count > 0 && event->key == InputKeyRight) {
+            state->selected_unit_index = (state->selected_unit_index + 1U) % state->profile_count;
+        } else if(state->profile_count > 0 && event->key == InputKeyLeft) {
             state->selected_unit_index =
-                (state->selected_unit_index == 0) ? choices - 1U : state->selected_unit_index - 1U;
+                (state->selected_unit_index == 0U) ?
+                    state->profile_count - 1U :
+                    state->selected_unit_index - 1U;
+        }
+    } else if(state->page == PageWizardIdentifyBrand) {
+        if(event->key == InputKeyLeft) state->manufacturer_known = false;
+        else if(event->key == InputKeyRight) state->manufacturer_known = true;
+    } else if(state->page == PageWizardSelectBrand && MANUFACTURER_COUNT > 1U) {
+        if(event->key == InputKeyRight) {
+            state->selected_manufacturer_index =
+                (state->selected_manufacturer_index + 1U) % MANUFACTURER_COUNT;
+        } else if(event->key == InputKeyLeft) {
+            state->selected_manufacturer_index =
+                (state->selected_manufacturer_index == 0U) ?
+                    MANUFACTURER_COUNT - 1U :
+                    state->selected_manufacturer_index - 1U;
         }
     }
 }
@@ -912,8 +960,7 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
                     if(state.page == PageControl) {
                         state.page = PageSelectUnit;
                         state.mode = KeypadModeSelectUnit;
-                        state.selected_unit_index =
-                            (state.profile_count < MAX_PROFILES) ? state.profile_count : 0;
+                        state.selected_unit_index = 0;
                         for(size_t i = 0; i < state.profile_count; i++) {
                             if(state.profile_ids[i] == state.active_profile_id) {
                                 state.selected_unit_index = i;
