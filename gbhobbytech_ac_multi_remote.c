@@ -407,7 +407,12 @@ static void wizard_menu_label(
     case PageWizardSelectRemote: {
         const AcRemoteEntry* remote =
             ac_remote_get_for_manufacturer(state->selected_manufacturer_index, index);
-        snprintf(label, label_size, "%s", remote ? remote->remote_code : "?");
+        snprintf(
+            label,
+            label_size,
+            "%s%s",
+            remote ? remote->remote_code : "?",
+            (remote && !remote->tested_unit) ? " *" : "");
         break;
     }
     case PageIdentifyResult:
@@ -521,11 +526,18 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
             snprintf(
                 remote_text,
                 sizeof(remote_text),
-                "REMOTE %s",
-                state->chosen_remote->remote_code);
+                "REMOTE %s%s",
+                state->chosen_remote->remote_code,
+                state->chosen_remote->tested_unit ? "" : "*");
             canvas_draw_str(canvas, 4, 53, remote_text);
         }
-        canvas_draw_str(canvas, 4, 63, "OK: LEARN SIGNALS  BACK");
+        canvas_draw_str(
+            canvas,
+            4,
+            63,
+            (state->chosen_remote && !state->chosen_remote->tested_unit) ?
+                "* REFERENCE CODE - VERIFY" :
+                "OK: LEARN SIGNALS  BACK");
         break;
     }
     case PageIdentifyPrompt:
@@ -549,10 +561,17 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         break;
     case PageIdentifyResult:
         if(state->identify_result == AcIdentifyMatch) {
+            const AcProtocolVariant* variant =
+                ac_variant_get(state->identify_matches[0]);
             draw_header(canvas, "PROTOCOL FOUND");
             draw_variant_name(canvas, 4, 34, state->identify_matches[0]);
-            canvas_draw_str(canvas, 4, 45, "Next: learn Normal and");
-            canvas_draw_str(canvas, 4, 54, "Off from this remote.");
+            if(variant && !variant->supports_state_control) {
+                canvas_draw_str(canvas, 4, 45, "Power replay only.");
+                canvas_draw_str(canvas, 4, 54, "Learn Normal and Off.");
+            } else {
+                canvas_draw_str(canvas, 4, 45, "Next: learn Normal and");
+                canvas_draw_str(canvas, 4, 54, "Off from this remote.");
+            }
             canvas_draw_str(canvas, 4, 63, "OK: NEXT    < RETRY");
         } else if(state->identify_result == AcIdentifyAmbiguous) {
             char heading[32];
@@ -603,20 +622,30 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         draw_header(canvas, "PROFILE SAVED");
         canvas_draw_str(canvas, 4, 33, "Normal and Off learned.");
         bool expected_seen = false;
+        size_t learned_variant = SIZE_MAX;
         if(state->has_expected_variant) {
             for(size_t i = 0; i < state->learned_match_count; i++) {
-                if(state->learned_matches[i] == state->expected_variant) expected_seen = true;
+                if(state->learned_matches[i] == state->expected_variant) {
+                    expected_seen = true;
+                    learned_variant = state->expected_variant;
+                }
             }
         }
-        if(expected_seen) {
-            draw_variant_name(canvas, 4, 43, state->expected_variant);
-        } else if(state->learned_result == AcIdentifyMatch) {
-            draw_variant_name(canvas, 4, 43, state->learned_matches[0]);
+        if(learned_variant == SIZE_MAX &&
+           state->learned_result == AcIdentifyMatch) {
+            learned_variant = state->learned_matches[0];
+        }
+        const AcProtocolVariant* variant =
+            (learned_variant != SIZE_MAX) ? ac_variant_get(learned_variant) : NULL;
+        if(variant) {
+            draw_variant_name(canvas, 4, 43, learned_variant);
         } else {
             canvas_draw_str(canvas, 4, 43, "Replay only: on / off.");
         }
         if(state->has_expected_variant && !expected_seen) {
             canvas_draw_str(canvas, 4, 53, "Chosen protocol not seen.");
+        } else if(variant && !variant->supports_state_control) {
+            canvas_draw_str(canvas, 4, 53, "POWER REPLAY ONLY");
         }
         canvas_draw_str(canvas, 4, 63, "OK: RETURN TO CONTROLS");
         break;
