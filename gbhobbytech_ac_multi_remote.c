@@ -141,6 +141,11 @@ static void draw_header(Canvas* canvas, const char* heading) {
     canvas_draw_line(canvas, 4, 23, 123, 23);
 }
 
+static void draw_str_bold(Canvas* canvas, int32_t x, int32_t y, const char* text) {
+    canvas_draw_str(canvas, x, y, text);
+    canvas_draw_str(canvas, x + 1, y, text);
+}
+
 /* Side-by-side left/right arrows, centred on a text baseline. */
 static void draw_fan_speed_arrows(Canvas* canvas, int32_t x, int32_t text_baseline_y) {
     const int32_t cy = text_baseline_y - 4;
@@ -313,15 +318,20 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         draw_header(canvas, "ADD UNIT");
         canvas_draw_str(canvas, 4, 35, "Can you identify the");
         canvas_draw_str(canvas, 4, 45, "manufacturer?");
-        canvas_draw_str(canvas, 4, 58,
-                         state->manufacturer_known ? "< NO   YES >" : "< NO*  YES >");
+        if(state->manufacturer_known) {
+            canvas_draw_str(canvas, 5, 58, "< NO");
+            draw_str_bold(canvas, 91, 58, "YES >");
+        } else {
+            draw_str_bold(canvas, 5, 58, "< NO");
+            canvas_draw_str(canvas, 91, 58, "YES >");
+        }
         break;
     case PageWizardSelectBrand: {
         draw_header(canvas, "SELECT BRAND");
         canvas_draw_str(canvas, 4, 35, "Supported protocol:");
         const char* manufacturer =
             manufacturer_names[state->selected_manufacturer_index % MANUFACTURER_COUNT];
-        canvas_draw_str(canvas, 4, 47, manufacturer);
+        draw_str_bold(canvas, 4, 47, manufacturer);
         canvas_draw_str(canvas, 4, 59, "< / > CHANGE   OK: USE");
         break;
     }
