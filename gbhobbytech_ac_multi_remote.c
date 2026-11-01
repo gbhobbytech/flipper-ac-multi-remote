@@ -184,7 +184,6 @@ static void draw_double_ok_icon(Canvas* canvas, int32_t cx, int32_t cy) {
 static void draw_control_key_hints(Canvas* canvas) {
     canvas_set_font(canvas, FontSecondary);
 
-    draw_temp_arrows(canvas, 9, 59);
     canvas_draw_str(canvas, 24, 63, "HOLD");
     draw_fan_speed_arrows(canvas, 44, 63);
     canvas_draw_str(canvas, 57, 63, "UNIT");
@@ -240,11 +239,10 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
         draw_power_short_icon(canvas, 122, 37);
 
         canvas_draw_str(canvas, 78, 50, fan_text);
-        const int32_t fan_arrows_x =
-            78 + (int32_t)canvas_string_width(canvas, fan_text) + 2;
-        draw_fan_speed_arrows(canvas, fan_arrows_x, 50);
+        draw_fan_speed_arrows(canvas, 115, 50);
 
         canvas_draw_line(canvas, 4, 54, 123, 54);
+        draw_temp_arrows(canvas, 11, 21);
         draw_control_key_hints(canvas);
     } else {
         draw_header(canvas, "CONTROL / 2xOK: UNITS");
