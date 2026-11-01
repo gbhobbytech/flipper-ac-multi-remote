@@ -1,17 +1,17 @@
 #include "ac_protocols.h"
 #include "ac_mitsubishi.h"
 
-#include <furi.h>
-
 /* ---- Matchers (wrap the drivers' own decoders; no extra signatures) ---- */
+
+/* Fixed scratch space for matchers, so identification needs no heap and adds
+ * little to the app's 4 KB stack. Matchers only run on the app thread, one at
+ * a time, so a single shared buffer is safe. Not reentrant. */
+static uint32_t matcher_prefix_scratch[AC_MITSUBISHI_PREFIX_MAX];
 
 static bool match_mitsubishi_ac_144(const InfraredSignal* signal) {
     uint8_t frame[AC_MITSUBISHI_FRAME_BYTES];
     size_t prefix_count = 0;
-    uint32_t* prefix = malloc(AC_MITSUBISHI_PREFIX_MAX * sizeof(uint32_t));
-    const bool matched = ac_mitsubishi_decode_profile(signal, frame, prefix, &prefix_count);
-    free(prefix);
-    return matched;
+    return ac_mitsubishi_decode_profile(signal, frame, matcher_prefix_scratch, &prefix_count);
 }
 
 /* ---- Catalogue ---- */
