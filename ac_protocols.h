@@ -37,6 +37,7 @@ typedef struct {
 typedef struct {
     size_t family;    /* Index into the family table. */
     const char* name; /* Variant within the family, e.g. "144-BIT". */
+    bool supports_state_control; /* False means identification + learned replay only. */
     /* Returns true only when the signal is a valid frame for this variant
      * (signature, length and checksum all check out). */
     bool (*matches)(const InfraredSignal* signal);
@@ -46,7 +47,7 @@ typedef struct {
     size_t manufacturer; /* Index into the manufacturer table. */
     const char* remote_code;
     size_t variant; /* Index into the variant table. */
-    const char* tested_unit; /* Indoor unit it was confirmed on. */
+    const char* tested_unit; /* NULL means reference mapping, not app-tested yet. */
 } AcRemoteEntry;
 
 typedef enum {
