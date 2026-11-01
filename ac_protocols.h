@@ -37,10 +37,13 @@ typedef struct {
 typedef struct {
     size_t family;    /* Index into the family table. */
     const char* name; /* Variant within the family, e.g. "144-BIT". */
-    bool supports_state_control; /* False means identification + learned replay only. */
+    bool supports_state_control; /* Direct mode/temp/fan state controls. */
+    bool supports_room_probe; /* Has a generated full-state test command. */
     /* Returns true only when the signal is a valid frame for this variant
      * (signature, length and checksum all check out). */
     bool (*matches)(const InfraredSignal* signal);
+    /* Builds a complete test state with the requested power state. */
+    bool (*build_probe_signal)(bool power_on, InfraredSignal* signal);
 } AcProtocolVariant;
 
 typedef struct {
