@@ -127,7 +127,7 @@ static const AcProtocolVariant variants[] = {
         {
             .family = FamilyMitsubishiHeavy,
             .name = "88-BIT",
-            .supports_state_control = false,
+            .supports_state_control = true,
             .supports_room_probe = true,
             .matches = match_mitsubishi_heavy_88,
             .build_probe_signal = build_mhi_88_probe,
@@ -136,7 +136,7 @@ static const AcProtocolVariant variants[] = {
         {
             .family = FamilyMitsubishiHeavy,
             .name = "152-BIT",
-            .supports_state_control = false,
+            .supports_state_control = true,
             .supports_room_probe = true,
             .matches = match_mitsubishi_heavy_152,
             .build_probe_signal = build_mhi_152_probe,
