@@ -28,7 +28,7 @@ Every list ends with **Not listed: capture**. When a capture is not recognised o
 
 Brands, remote codes and variants live in `ac_protocols.c`. They are kept as separate records (manufacturer, protocol family, protocol variant, remote entry). Mitsubishi Electric and Mitsubishi Heavy Industries are separate manufacturers with unrelated protocols.
 
-Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit captures can be identified from their raw signal signatures. The listed remote-code mappings are reference leads and have not yet been verified against a physical unit. MHI currently supports learned Normal/Off power replay only; direct temperature, fan and mode control is not implemented. The wizard marks unverified remote-code mappings and shows the replay-only limitation.
+Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit captures can be identified from their raw signal signatures. The bundled `ac_mhi.c` module now also builds complete MHI state frames and raw IR timings for both variants, including power, mode, temperature and fan fields. This frame builder is library groundwork: the app wizard and control screen do not yet use it to send MHI commands. MHI therefore remains replay-only in the current UI until the in-room protocol trial and direct-control paths are connected and verified on a real unit. The listed remote-code mappings are reference leads and have not yet been verified against a physical unit. The wizard marks unverified remote-code mappings and shows the replay-only limitation.
 
 For other raw profiles, the app continues to replay the learned Normal and Off signals and shows that temperature and fan are not decoded. Without a saved profile, the screen remains in preview mode.
 
