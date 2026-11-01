@@ -31,6 +31,7 @@ typedef struct {
 } AcManufacturer;
 
 typedef struct {
+    size_t manufacturer; /* Index into the manufacturer table. */
     const char* name; /* Family identifier, e.g. "MITSUBISHI_AC". */
 } AcProtocolFamily;
 
