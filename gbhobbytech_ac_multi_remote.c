@@ -165,6 +165,15 @@ static const char* active_fan_name(const AcMultiRemoteState* state) {
                                (uint8_t)(FAN_SPEED_COUNT - 1U)];
 }
 
+static const char* active_profile_name(const AcMultiRemoteState* state) {
+    for(size_t i = 0U; i < state->profile_count; i++) {
+        if(state->profile_ids[i] == state->active_profile_id) {
+            return state->profile_names[i];
+        }
+    }
+    return NULL;
+}
+
 static void app_request_redraw(AcMultiRemoteState* state) {
     view_port_update(state->view_port);
 }
@@ -361,8 +370,12 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
             else if(mode_code == 7U) mode_name = "FAN";
         }
 
-        snprintf(profile_text, sizeof(profile_text), "UNIT %02u",
-                 (unsigned)state->active_profile_id);
+        const char* const active_name = active_profile_name(state);
+        snprintf(
+            profile_text,
+            sizeof(profile_text),
+            "%s",
+            active_name ? active_name : "UNIT");
         snprintf(temperature_text, sizeof(temperature_text), "%u",
                  (unsigned)state->temperature_c);
         snprintf(power_text, sizeof(power_text), "%s",
@@ -372,7 +385,8 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
 
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 4, 9, "A/C MASTER");
-        canvas_draw_str(canvas, 94, 9, profile_text);
+        const int32_t name_x = 124 - (int32_t)canvas_string_width(canvas, profile_text);
+        canvas_draw_str(canvas, name_x, 9, profile_text);
         canvas_draw_line(canvas, 4, 13, 123, 13);
 
         canvas_set_font(canvas, FontBigNumbers);
@@ -401,8 +415,12 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
         draw_header(canvas, "CONTROL / 2xOK: UNITS");
 
         if(state->active_profile_id) {
-            snprintf(profile_text, sizeof(profile_text), "AC UNIT %02u: LEARNED",
-                     (unsigned)state->active_profile_id);
+            const char* const active_name = active_profile_name(state);
+            snprintf(
+                profile_text,
+                sizeof(profile_text),
+                "%s",
+                active_name ? active_name : "LEARNED UNIT");
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 4, 33, profile_text);
 
