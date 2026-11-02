@@ -107,7 +107,7 @@ static bool decode_frame_at(
             return false;
         }
         if(space > FUJITSU_ONE_SPACE * 65U / 100U) {
-            candidate[bit / 8U] |= (uint8_t)(1U << (7U - (bit % 8U)));
+            candidate[bit / 8U] |= (uint8_t)(1U << (bit % 8U));
         } else if(space > FUJITSU_ZERO_SPACE * 55U / 100U &&
                   space < FUJITSU_ZERO_SPACE * 155U / 100U) {
             /* zero bit */
@@ -222,7 +222,7 @@ static bool build_timings(
     for(size_t bit = 0U; bit < length * 8U; bit++) {
         timings[out++] = FUJITSU_BIT_MARK;
         timings[out++] =
-            (command[bit / 8U] & (uint8_t)(1U << (7U - (bit % 8U)))) ?
+            (command[bit / 8U] & (uint8_t)(1U << (bit % 8U))) ?
                 FUJITSU_ONE_SPACE :
                 FUJITSU_ZERO_SPACE;
     }
