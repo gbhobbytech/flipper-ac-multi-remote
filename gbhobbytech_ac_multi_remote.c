@@ -1125,11 +1125,11 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
         case 4U: state->fan_speed = 4U; break;
         default: state->fan_speed = 0U; break;
         }
-        if(state->temperature_c < ac_fujitsu_min_temperature(state->fujitsu_variant)) {
-            state->temperature_c = ac_fujitsu_min_temperature(state->fujitsu_variant);
+        if(state->temperature_c < ac_fujitsu_min_temperature()) {
+            state->temperature_c = ac_fujitsu_min_temperature();
         }
-        if(state->temperature_c > ac_fujitsu_max_temperature(state->fujitsu_variant)) {
-            state->temperature_c = ac_fujitsu_max_temperature(state->fujitsu_variant);
+        if(state->temperature_c > ac_fujitsu_max_temperature()) {
+            state->temperature_c = ac_fujitsu_max_temperature();
         }
         return true;
     }
@@ -1726,7 +1726,7 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
         const uint8_t minimum_temperature =
             state->mhi_supported ?
                 (uint8_t)MHI_TEMP_MIN :
-                (state->fujitsu_supported ? ac_fujitsu_min_temperature(state->fujitsu_variant) :
+                (state->fujitsu_supported ? ac_fujitsu_min_temperature() :
                 (state->gree_supported ? 16U :
                  (state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone ?
                      ac_mitsubishi_legacy_min_temperature(state->mitsubishi_legacy_variant) :
@@ -1734,7 +1734,7 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
         const uint8_t maximum_temperature =
             state->mhi_supported ?
                 (uint8_t)MHI_TEMP_MAX :
-                (state->fujitsu_supported ? ac_fujitsu_max_temperature(state->fujitsu_variant) :
+                (state->fujitsu_supported ? ac_fujitsu_max_temperature() :
                 (state->gree_supported ? 30U :
                  (state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone ?
                      ac_mitsubishi_legacy_max_temperature(state->mitsubishi_legacy_variant) :
