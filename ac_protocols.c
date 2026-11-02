@@ -2,6 +2,7 @@
 #include "ac_mitsubishi.h"
 #include "ac_mhi.h"
 #include "ac_gree.h"
+#include "ac_fujitsu.h"
 #include "ac_mitsubishi_legacy.h"
 
 #define AC_PROBE_TEMP_C 24U
@@ -13,6 +14,46 @@
  * little to the app's 4 KB stack. Matchers only run on the app thread, one at
  * a time, so a single shared buffer is safe. Not reentrant. */
 static uint32_t matcher_prefix_scratch[AC_MITSUBISHI_PREFIX_MAX];
+
+static bool match_fujitsu_variant(
+    const InfraredSignal* signal,
+    AcFujitsuVariant expected_variant) {
+    AcFujitsuVariant detected_variant = AcFujitsuVariantUnknown;
+    uint8_t frame[AC_FUJITSU_MAX_STATE_BYTES];
+    return ac_fujitsu_decode_signal(signal, &detected_variant, frame) &&
+           detected_variant == expected_variant;
+}
+
+static bool match_fujitsu_long30(const InfraredSignal* signal) {
+    return match_fujitsu_variant(signal, AcFujitsuVariantLong30);
+}
+
+static bool match_fujitsu_compact(const InfraredSignal* signal) {
+    return match_fujitsu_variant(signal, AcFujitsuVariantCompact);
+}
+
+static bool match_fujitsu_long31(const InfraredSignal* signal) {
+    return match_fujitsu_variant(signal, AcFujitsuVariantLong31);
+}
+
+static bool build_fujitsu_probe(
+    AcFujitsuVariant variant,
+    bool power_on,
+    InfraredSignal* signal) {
+    return ac_fujitsu_build_probe(variant, power_on, signal);
+}
+
+static bool build_fujitsu_long30_probe(bool power_on, InfraredSignal* signal) {
+    return build_fujitsu_probe(AcFujitsuVariantLong30, power_on, signal);
+}
+
+static bool build_fujitsu_compact_probe(bool power_on, InfraredSignal* signal) {
+    return build_fujitsu_probe(AcFujitsuVariantCompact, power_on, signal);
+}
+
+static bool build_fujitsu_long31_probe(bool power_on, InfraredSignal* signal) {
+    return build_fujitsu_probe(AcFujitsuVariantLong31, power_on, signal);
+}
 
 static bool match_mitsubishi_ac_144(const InfraredSignal* signal) {
     uint8_t frame[AC_MITSUBISHI_FRAME_BYTES];
@@ -177,6 +218,7 @@ enum {
     FamilyMitsubishiAc,
     FamilyMitsubishiHeavy,
     FamilyGree,
+    FamilyFujitsu,
 };
 
 static const AcProtocolFamily families[] = {
@@ -192,6 +234,10 @@ static const AcProtocolFamily families[] = {
         .manufacturer = ManufacturerGree,
         .name = "GREE",
     },
+    [FamilyFujitsu] = {
+        .manufacturer = ManufacturerFujitsu,
+        .name = "FUJITSU_AC",
+    },
 };
 
 enum {
@@ -204,6 +250,9 @@ enum {
     VariantGreeYaw1f,
     VariantGreeYbofb,
     VariantGreeYx1fsf,
+    VariantFujitsuLong30,
+    VariantFujitsuCompact,
+    VariantFujitsuLong31,
 };
 
 static const AcProtocolVariant variants[] = {
@@ -279,6 +328,34 @@ static const AcProtocolVariant variants[] = {
             .supports_room_probe = true,
             .matches = match_gree_yx1fsf,
             .build_probe_signal = build_gree_yx1fsf_probe,
+        },
+    /* Unique Fujitsu wire families with all swing bits kept at zero. */
+    [VariantFujitsuLong30] =
+        {
+            .family = FamilyFujitsu,
+            .name = "16B V30",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_fujitsu_long30,
+            .build_probe_signal = build_fujitsu_long30_probe,
+        },
+    [VariantFujitsuCompact] =
+        {
+            .family = FamilyFujitsu,
+            .name = "15B FC",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_fujitsu_compact,
+            .build_probe_signal = build_fujitsu_compact_probe,
+        },
+    [VariantFujitsuLong31] =
+        {
+            .family = FamilyFujitsu,
+            .name = "16B V31",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_fujitsu_long31,
+            .build_probe_signal = build_fujitsu_long31_probe,
         },
 };
 
