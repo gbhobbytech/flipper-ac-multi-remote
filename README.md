@@ -1,4 +1,4 @@
-# AC Multi Remote for Flipper Zero
+# A/C Master for Flipper Zero
 
 A simple infrared controller for air conditioners, built as a Flipper Zero external app.
 
