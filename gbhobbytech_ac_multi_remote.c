@@ -371,8 +371,8 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
         snprintf(mode_text, sizeof(mode_text), "%s", mode_name);
 
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 4, 9, "AC MULTI REMOTE");
-        canvas_draw_str(canvas, 96, 9, profile_text);
+        canvas_draw_str(canvas, 4, 9, "A/C MASTER");
+        canvas_draw_str(canvas, 94, 9, profile_text);
         canvas_draw_line(canvas, 4, 13, 123, 13);
 
         canvas_set_font(canvas, FontBigNumbers);
