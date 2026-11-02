@@ -28,11 +28,11 @@ static size_t state_length(AcFujitsuVariant variant) {
     return variant == AcFujitsuVariantCompact ? 15U : 16U;
 }
 
-uint8_t ac_fujitsu_min_temperature(AcFujitsuVariant variant) {
-    return variant == AcFujitsuVariantLong31 ? 8U : 16U;
+uint8_t ac_fujitsu_min_temperature(void) {
+    return 16U;
 }
 
-uint8_t ac_fujitsu_max_temperature(AcFujitsuVariant variant) {
+uint8_t ac_fujitsu_max_temperature(void) {
     return 30U;
 }
 
@@ -180,10 +180,10 @@ bool ac_fujitsu_build_state(
     frame[5] = variant == AcFujitsuVariantCompact ? 0xFCU : FUJITSU_CMD_ON;
     frame[6] = variant == AcFujitsuVariantCompact ? 8U : 9U;
     frame[7] = variant == AcFujitsuVariantLong31 ? 0x31U : 0x30U;
-    const uint8_t min_temp = ac_fujitsu_min_temperature(variant);
+    const uint8_t min_temp = ac_fujitsu_min_temperature();
     if(temperature_c < min_temp) temperature_c = min_temp;
-    if(temperature_c > ac_fujitsu_max_temperature(variant)) {
-        temperature_c = ac_fujitsu_max_temperature(variant);
+    if(temperature_c > ac_fujitsu_max_temperature()) {
+        temperature_c = ac_fujitsu_max_temperature();
     }
     const uint8_t temp_field = variant == AcFujitsuVariantLong31 ?
                                    (uint8_t)((temperature_c - 8U) * 2U) :
