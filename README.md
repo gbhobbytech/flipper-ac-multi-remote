@@ -7,7 +7,7 @@ A multi-profile infrared controller for compatible air conditioners. A/C Master 
 - Control power, temperature, mode and fan speed when a profile has a supported decoded protocol.
 - Save multiple unit profiles and give each one a useful name.
 - Identify a unit by manufacturer and try the bundled protocol variants with a simple Yes/No confirmation.
-- Learn and replay Normal and Off signals for units without direct state support.
+- Learn and replay Normal and Off signals for units without direct state control.
 - Store profiles on the Flipper Zero microSD card.
 
 ## Supported protocol families
@@ -60,7 +60,13 @@ To install it persistently, copy the FAP to **SD Card/apps/Infrared** with qFlip
 
 ## Screenshots
 
-Catalog screenshots are being prepared from the running app using qFlipper. They will be added here after capture.
+Captured from the running app with qFlipper:
+
+![A/C Master main control screen](screenshots/Main%20Screen.png)
+![Unit selection screen](screenshots/Select%20Unit%20Screen.png)
+![Manage unit screen](screenshots/Manage%20Unit.png)
+![Add unit wizard](screenshots/Unit%20Add%20Wizard.png)
+![Setup wizard](screenshots/Setup%20Wizard.png)
 
 ## Profile storage
 
