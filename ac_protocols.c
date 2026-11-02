@@ -1,6 +1,7 @@
 #include "ac_protocols.h"
 #include "ac_mitsubishi.h"
 #include "ac_mhi.h"
+#include "ac_gree.h"
 #include "ac_mitsubishi_legacy.h"
 
 #define AC_PROBE_TEMP_C 24U
@@ -49,6 +50,44 @@ static bool build_mitsubishi_112_probe(bool power_on, InfraredSignal* signal) {
 
 static bool build_mitsubishi_136_probe(bool power_on, InfraredSignal* signal) {
     return build_mitsubishi_legacy_probe(AcMitsubishiLegacy136, power_on, signal);
+}
+
+static bool match_gree_variant(const InfraredSignal* signal, AcGreeModel expected_model) {
+    AcGreeModel detected_model = AcGreeModelUnknown;
+    uint8_t frame[AC_GREE_STATE_BYTES];
+    return ac_gree_decode_signal(signal, &detected_model, frame) &&
+           detected_model == expected_model;
+}
+
+static bool match_gree_yaw1f(const InfraredSignal* signal) {
+    return match_gree_variant(signal, AcGreeModelYaw1f);
+}
+
+static bool match_gree_ybofb(const InfraredSignal* signal) {
+    return match_gree_variant(signal, AcGreeModelYbofb);
+}
+
+static bool match_gree_yx1fsf(const InfraredSignal* signal) {
+    return match_gree_variant(signal, AcGreeModelYx1fsf);
+}
+
+static bool build_gree_probe_model(
+    AcGreeModel model,
+    bool power_on,
+    InfraredSignal* signal) {
+    return ac_gree_build_probe(model, power_on, signal);
+}
+
+static bool build_gree_yaw1f_probe(bool power_on, InfraredSignal* signal) {
+    return build_gree_probe_model(AcGreeModelYaw1f, power_on, signal);
+}
+
+static bool build_gree_ybofb_probe(bool power_on, InfraredSignal* signal) {
+    return build_gree_probe_model(AcGreeModelYbofb, power_on, signal);
+}
+
+static bool build_gree_yx1fsf_probe(bool power_on, InfraredSignal* signal) {
+    return build_gree_probe_model(AcGreeModelYx1fsf, power_on, signal);
 }
 
 static bool match_mitsubishi_heavy_variant(
@@ -137,6 +176,7 @@ static const AcManufacturer manufacturers[] = {
 enum {
     FamilyMitsubishiAc,
     FamilyMitsubishiHeavy,
+    FamilyGree,
 };
 
 static const AcProtocolFamily families[] = {
@@ -148,6 +188,10 @@ static const AcProtocolFamily families[] = {
         .manufacturer = ManufacturerMitsubishiHeavy,
         .name = "MHI",
     },
+    [FamilyGree] = {
+        .manufacturer = ManufacturerGree,
+        .name = "GREE",
+    },
 };
 
 enum {
@@ -157,6 +201,9 @@ enum {
     VariantMitsubishiAc136,
     VariantMitsubishiHeavy88,
     VariantMitsubishiHeavy152,
+    VariantGreeYaw1f,
+    VariantGreeYbofb,
+    VariantGreeYx1fsf,
 };
 
 static const AcProtocolVariant variants[] = {
@@ -204,6 +251,34 @@ static const AcProtocolVariant variants[] = {
             .supports_room_probe = true,
             .matches = match_mitsubishi_heavy_152,
             .build_probe_signal = build_mhi_152_probe,
+        },
+    /* Gree uses one 64-bit frame with model-specific state bits/modes. */
+    [VariantGreeYaw1f] =
+        {
+            .family = FamilyGree,
+            .name = "YAW1F",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_gree_yaw1f,
+            .build_probe_signal = build_gree_yaw1f_probe,
+        },
+    [VariantGreeYbofb] =
+        {
+            .family = FamilyGree,
+            .name = "YBOFB",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_gree_ybofb,
+            .build_probe_signal = build_gree_ybofb_probe,
+        },
+    [VariantGreeYx1fsf] =
+        {
+            .family = FamilyGree,
+            .name = "YX1FSF",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_gree_yx1fsf,
+            .build_probe_signal = build_gree_yx1fsf_probe,
         },
 };
 
