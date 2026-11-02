@@ -11,6 +11,7 @@
 #include <infrared/worker/infrared_worker.h>
 #include <lib/infrared/signal/infrared_signal.h>
 #include "ac_mitsubishi.h"
+#include "ac_mitsubishi_legacy.h"
 #include "ac_mhi.h"
 #include "ac_protocols.h"
 
@@ -102,6 +103,8 @@ typedef struct {
     uint8_t temperature_c;
     uint8_t fan_speed;
     uint8_t mitsubishi_frame[AC_MITSUBISHI_FRAME_BYTES];
+    uint8_t mitsubishi_legacy_frame[AC_MITSUBISHI_LEGACY_MAX_FRAME_BYTES];
+    AcMitsubishiLegacyVariant mitsubishi_legacy_variant;
     uint32_t mitsubishi_prefix[AC_MITSUBISHI_PREFIX_MAX];
     size_t mitsubishi_prefix_count;
     uint8_t mhi_frame[AC_MHI_MAX_STATE_BYTES];
@@ -124,6 +127,25 @@ static const char* const wizard_method_names[] = {
 #define WIZARD_METHOD_COUNT (sizeof(wizard_method_names) / sizeof(wizard_method_names[0]))
 #define WIZARD_METHOD_IDENTIFY 0U
 #define FAN_SPEED_COUNT (sizeof(fan_speed_names) / sizeof(fan_speed_names[0]))
+
+static uint8_t active_fan_count(const AcMultiRemoteState* state) {
+    if(state->mhi_supported) return (uint8_t)FAN_SPEED_COUNT;
+    if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
+        return ac_mitsubishi_legacy_fan_count(state->mitsubishi_legacy_variant);
+    }
+    return (uint8_t)FAN_SPEED_COUNT;
+}
+
+static const char* active_fan_name(const AcMultiRemoteState* state) {
+    static const char* const legacy_fan_names[] = {"QUIET", "LOW", "MED", "MAX"};
+    if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone &&
+       state->fan_speed < (uint8_t)(sizeof(legacy_fan_names) / sizeof(legacy_fan_names[0]))) {
+        return legacy_fan_names[state->fan_speed];
+    }
+    return fan_speed_names[state->fan_speed < (uint8_t)FAN_SPEED_COUNT ?
+                               state->fan_speed :
+                               (uint8_t)(FAN_SPEED_COUNT - 1U)];
+}
 
 static void app_request_redraw(AcMultiRemoteState* state) {
     view_port_update(state->view_port);
@@ -275,7 +297,9 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     if(state->active_profile_id && state->state_control_supported) {
         const uint8_t mode_code = state->mhi_supported ?
                                      state->mhi_mode :
-                                     (uint8_t)((state->mitsubishi_frame[6] >> 3) & 0x07U);
+                                     (state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone ?
+                                          (state->mitsubishi_legacy_frame[6] & 0x07U) :
+                                          (uint8_t)((state->mitsubishi_frame[6] >> 3) & 0x07U));
         const char* mode_name = "UNKNOWN";
         if(state->mhi_supported) {
             if(mode_code == (uint8_t)AcMhiModeAuto) mode_name = "AUTO";
@@ -283,6 +307,17 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
             else if(mode_code == (uint8_t)AcMhiModeDry) mode_name = "DRY";
             else if(mode_code == (uint8_t)AcMhiModeFan) mode_name = "FAN";
             else if(mode_code == (uint8_t)AcMhiModeHeat) mode_name = "HEAT";
+        } else if(state->mitsubishi_legacy_variant == AcMitsubishiLegacy112) {
+            if(mode_code == 1U) mode_name = "HEAT";
+            else if(mode_code == 2U) mode_name = "DRY";
+            else if(mode_code == 3U) mode_name = "COOL";
+            else if(mode_code == 7U) mode_name = "AUTO";
+        } else if(state->mitsubishi_legacy_variant == AcMitsubishiLegacy136) {
+            if(mode_code == 0U) mode_name = "FAN";
+            else if(mode_code == 1U) mode_name = "COOL";
+            else if(mode_code == 2U) mode_name = "HEAT";
+            else if(mode_code == 3U) mode_name = "AUTO";
+            else if(mode_code == 5U) mode_name = "DRY";
         } else {
             if(mode_code == 1U) mode_name = "HEAT";
             else if(mode_code == 2U) mode_name = "DRY";
@@ -297,8 +332,7 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
                  (unsigned)state->temperature_c);
         snprintf(power_text, sizeof(power_text), "%s",
                  state->power_on ? "ON" : "OFF");
-        snprintf(fan_text, sizeof(fan_text), "%s",
-                 fan_speed_names[state->fan_speed]);
+        snprintf(fan_text, sizeof(fan_text), "%s", active_fan_name(state));
         snprintf(mode_text, sizeof(mode_text), "%s", mode_name);
 
         canvas_set_font(canvas, FontSecondary);
@@ -950,7 +984,9 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
     FlipperFormat* format = flipper_format_file_alloc(storage);
     InfraredSignal* signal = infrared_signal_alloc();
     bool mitsubishi_decoded = false;
+    bool mitsubishi_legacy_decoded = false;
     bool mhi_decoded = false;
+    state->mitsubishi_legacy_variant = AcMitsubishiLegacyNone;
 
     if(flipper_format_file_open_existing(format, path)) {
         if(infrared_signal_search_by_name_and_read(signal, format, "Normal") ==
@@ -961,6 +997,10 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
                 state->mitsubishi_prefix,
                 &state->mitsubishi_prefix_count);
             if(!mitsubishi_decoded) {
+                mitsubishi_legacy_decoded = ac_mitsubishi_legacy_decode(
+                    signal, &state->mitsubishi_legacy_variant, state->mitsubishi_legacy_frame);
+            }
+            if(!mitsubishi_decoded && !mitsubishi_legacy_decoded) {
                 mhi_decoded = ac_mhi_decode_signal(
                     signal, &state->mhi_variant, state->mhi_frame);
             }
@@ -988,6 +1028,19 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
                     (uint8_t)(FAN_SPEED_COUNT - 1U);
         }
         return true;
+    }
+
+    if(mitsubishi_legacy_decoded) {
+        state->state_control_supported = true;
+        state->mhi_supported = false;
+        uint8_t mode_code = 0U;
+        return ac_mitsubishi_legacy_get_controls(
+            state->mitsubishi_legacy_variant,
+            state->mitsubishi_legacy_frame,
+            &state->power_on,
+            &state->temperature_c,
+            &mode_code,
+            &state->fan_speed);
     }
 
     if(mhi_decoded) {
@@ -1143,11 +1196,27 @@ static bool transmit_mhi_state(AcMultiRemoteState* state) {
     return true;
 }
 
+static bool transmit_active_state(AcMultiRemoteState* state) {
+    if(state->mhi_supported) return transmit_mhi_state(state);
+    if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
+        return ac_mitsubishi_legacy_transmit(
+            state->mitsubishi_legacy_variant, state->mitsubishi_legacy_frame);
+    }
+    return transmit_mitsubishi_state(state);
+}
+
 static void update_active_power(AcMultiRemoteState* state, bool power_on) {
     if(state->mhi_supported) {
         const bool previous_power = state->power_on;
         state->power_on = power_on;
         if(!transmit_mhi_state(state)) state->power_on = previous_power;
+        return;
+    }
+
+    if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
+        ac_mitsubishi_legacy_set_power(
+            state->mitsubishi_legacy_variant, state->mitsubishi_legacy_frame, power_on);
+        if(transmit_active_state(state)) state->power_on = power_on;
         return;
     }
 
@@ -1167,6 +1236,13 @@ static void toggle_active_mode(AcMultiRemoteState* state) {
                 (uint8_t)AcMhiModeHeat :
                 (uint8_t)AcMhiModeCool;
         transmit_mhi_state(state);
+        return;
+    }
+
+    if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
+        ac_mitsubishi_legacy_toggle_mode(
+            state->mitsubishi_legacy_variant, state->mitsubishi_legacy_frame);
+        transmit_active_state(state);
         return;
     }
 
@@ -1528,17 +1604,33 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
     if(state->page == PageControl && state->state_control_supported) {
         bool changed = false;
         const uint8_t minimum_temperature =
-            state->mhi_supported ? (uint8_t)MHI_TEMP_MIN : (uint8_t)MITSUBISHI_TEMP_MIN;
+            state->mhi_supported ?
+                (uint8_t)MHI_TEMP_MIN :
+                (state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone ?
+                     ac_mitsubishi_legacy_min_temperature(state->mitsubishi_legacy_variant) :
+                     (uint8_t)MITSUBISHI_TEMP_MIN);
         const uint8_t maximum_temperature =
-            state->mhi_supported ? (uint8_t)MHI_TEMP_MAX : (uint8_t)MITSUBISHI_TEMP_MAX;
+            state->mhi_supported ?
+                (uint8_t)MHI_TEMP_MAX :
+                (state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone ?
+                     ac_mitsubishi_legacy_max_temperature(state->mitsubishi_legacy_variant) :
+                     (uint8_t)MITSUBISHI_TEMP_MAX);
+        const uint8_t fan_count = active_fan_count(state);
         switch(event->key) {
         case InputKeyUp:
             if(state->temperature_c < maximum_temperature) {
                 state->temperature_c++;
                 if(!state->mhi_supported) {
-                    state->mitsubishi_frame[7] =
-                        (uint8_t)((state->mitsubishi_frame[7] & 0xE0U) |
-                                  (state->temperature_c - MITSUBISHI_TEMP_MIN));
+                    if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
+                        ac_mitsubishi_legacy_set_temperature(
+                            state->mitsubishi_legacy_variant,
+                            state->mitsubishi_legacy_frame,
+                            state->temperature_c);
+                    } else {
+                        state->mitsubishi_frame[7] =
+                            (uint8_t)((state->mitsubishi_frame[7] & 0xE0U) |
+                                      (state->temperature_c - MITSUBISHI_TEMP_MIN));
+                    }
                 }
                 changed = true;
             }
@@ -1547,9 +1639,16 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
             if(state->temperature_c > minimum_temperature) {
                 state->temperature_c--;
                 if(!state->mhi_supported) {
-                    state->mitsubishi_frame[7] =
-                        (uint8_t)((state->mitsubishi_frame[7] & 0xE0U) |
-                                  (state->temperature_c - MITSUBISHI_TEMP_MIN));
+                    if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
+                        ac_mitsubishi_legacy_set_temperature(
+                            state->mitsubishi_legacy_variant,
+                            state->mitsubishi_legacy_frame,
+                            state->temperature_c);
+                    } else {
+                        state->mitsubishi_frame[7] =
+                            (uint8_t)((state->mitsubishi_frame[7] & 0xE0U) |
+                                      (state->temperature_c - MITSUBISHI_TEMP_MIN));
+                    }
                 }
                 changed = true;
             }
@@ -1561,7 +1660,7 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
             }
             break;
         case InputKeyRight:
-            if(state->fan_speed < (uint8_t)(FAN_SPEED_COUNT - 1U)) {
+            if(state->fan_speed + 1U < fan_count) {
                 state->fan_speed++;
                 changed = true;
             }
@@ -1573,6 +1672,12 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
         if(changed) {
             if(state->mhi_supported) {
                 transmit_mhi_state(state);
+            } else if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
+                ac_mitsubishi_legacy_set_fan(
+                    state->mitsubishi_legacy_variant,
+                    state->mitsubishi_legacy_frame,
+                    state->fan_speed);
+                transmit_active_state(state);
             } else {
                 const uint8_t fan_code = mitsubishi_fan_codes[state->fan_speed];
                 state->mitsubishi_frame[9] =
