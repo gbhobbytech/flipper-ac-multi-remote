@@ -1,6 +1,7 @@
 #include <furi.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <gui/view_dispatcher.h>
@@ -29,6 +30,9 @@
 #define MITSUBISHI_TEMP_MAX 31U
 #define MENU_VISIBLE_ROWS 3U
 #define AC_ROOM_PROBE_MAX_VARIANTS 12U
+#define AC_CAPTURE_QUIET_TIMEOUT_MS 300U
+#define AC_CAPTURE_INTER_SIGNAL_GAP_FALLBACK_US 40000U
+#define AC_CAPTURE_MAX_TIMINGS 2048U
 static const uint8_t mitsubishi_fan_codes[] = {0U, 1U, 2U, 3U, 4U};
 static const uint8_t mhi_88_fan_codes[] = {0U, 2U, 3U, 4U, 6U};
 static const uint8_t mhi_152_fan_codes[] = {0U, 1U, 2U, 3U, 4U};
@@ -83,6 +87,12 @@ typedef struct {
     InfraredWorker* infrared_worker;
     InfraredSignal* capture_signal;
     InfraredSignal* normal_signal;
+    uint32_t* capture_timings;
+    size_t capture_timings_count;
+    uint32_t last_raw_signal_tick;
+    uint32_t capture_last_signal_tick;
+    bool capture_is_raw;
+    bool capture_overflow;
     KeypadMode mode;
     AppPage page;
     uint8_t profile_ids[MAX_PROFILES];
@@ -195,28 +205,88 @@ static void input_callback(InputEvent* input, void* context) {
     }
 }
 
+static bool append_capture_timings(
+    AcMultiRemoteState* state,
+    const uint32_t* timings,
+    size_t timings_count,
+    uint32_t now_tick) {
+    if(!state->capture_timings || !timings || timings_count == 0U ||
+       state->capture_overflow) {
+        return false;
+    }
+
+    uint64_t signal_duration_us = 0U;
+    for(size_t i = 0U; i < timings_count; i++) {
+        signal_duration_us += timings[i];
+    }
+
+    size_t gap_slots = 0U;
+    uint32_t gap_us = AC_CAPTURE_INTER_SIGNAL_GAP_FALLBACK_US;
+    if(state->capture_timings_count > 0U) {
+        /* The worker calls back after each raw packet. Remove this packet's
+         * duration from the callback interval to estimate the intervening space. */
+        gap_slots = (state->capture_timings_count & 1U) ? 1U : 0U;
+        const uint64_t elapsed_us =
+            (uint64_t)(now_tick - state->last_raw_signal_tick) * 1000U;
+        if(elapsed_us > signal_duration_us) {
+            const uint64_t estimated_gap_us = elapsed_us - signal_duration_us;
+            if(estimated_gap_us >= 5000U && estimated_gap_us <= 250000U) {
+                gap_us = (uint32_t)estimated_gap_us;
+            }
+        }
+    }
+
+    if(timings_count > AC_CAPTURE_MAX_TIMINGS - state->capture_timings_count - gap_slots) {
+        state->capture_overflow = true;
+        return false;
+    }
+
+    if(state->capture_timings_count > 0U) {
+        if(gap_slots > 0U) {
+            state->capture_timings[state->capture_timings_count++] = gap_us;
+        } else {
+            state->capture_timings[state->capture_timings_count - 1U] += gap_us;
+        }
+    }
+
+    memcpy(
+        &state->capture_timings[state->capture_timings_count],
+        timings,
+        timings_count * sizeof(uint32_t));
+    state->capture_timings_count += timings_count;
+    state->last_raw_signal_tick = now_tick;
+    return true;
+}
+
 static void received_signal_callback(void* context, InfraredWorkerSignal* received_signal) {
     AcMultiRemoteState* state = context;
     if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) != FuriStatusOk) return;
 
     bool post_event = false;
-    if(state->capturing && !state->capture_received) {
+    const uint32_t now_tick = furi_get_tick();
+    if(state->capturing) {
         if(infrared_worker_signal_is_decoded(received_signal)) {
-            infrared_signal_set_message(
-                state->capture_signal, infrared_worker_get_decoded_signal(received_signal));
-        } else {
+            if(!state->capture_received) {
+                infrared_signal_set_message(
+                    state->capture_signal, infrared_worker_get_decoded_signal(received_signal));
+                state->capture_is_raw = false;
+                state->capture_received = true;
+                state->capture_last_signal_tick = now_tick;
+                post_event = true;
+            }
+        } else if(!state->capture_received || state->capture_is_raw) {
             const uint32_t* timings = NULL;
-            size_t timings_count = 0;
+            size_t timings_count = 0U;
             infrared_worker_get_raw_signal(received_signal, &timings, &timings_count);
-            infrared_signal_set_raw_signal(
-                state->capture_signal,
-                timings,
-                timings_count,
-                INFRARED_COMMON_CARRIER_FREQUENCY,
-                INFRARED_COMMON_DUTY_CYCLE);
+            if(append_capture_timings(state, timings, timings_count, now_tick)) {
+                state->capture_is_raw = true;
+            } else {
+                state->capture_overflow = true;
+            }
+            state->capture_received = true;
+            state->capture_last_signal_tick = now_tick;
+            post_event = true;
         }
-        state->capture_received = true;
-        post_event = true;
     }
 
     furi_mutex_release(state->capture_mutex);
@@ -695,8 +765,9 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
     case PageListenNormal:
         draw_header(canvas, "LISTENING FOR NORMAL");
         canvas_draw_str(canvas, 4, 34, "Point remote at Flipper.");
-        canvas_draw_str(canvas, 4, 44, "Press a setting button.");
-        canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
+        canvas_draw_str(canvas, 4, 44, "Press a setting button once.");
+        canvas_draw_str(canvas, 4, 54, "Wait for the full burst.");
+        canvas_draw_str(canvas, 4, 63, "BACK: CANCEL");
         break;
     case PageLearnOff:
         draw_header(canvas, "LEARN OFF STATE");
@@ -709,8 +780,9 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
     case PageListenOff:
         draw_header(canvas, "LISTENING FOR OFF");
         canvas_draw_str(canvas, 4, 34, "Point remote at Flipper.");
-        canvas_draw_str(canvas, 4, 44, "Press POWER to turn off.");
-        canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
+        canvas_draw_str(canvas, 4, 44, "Press POWER once to turn off.");
+        canvas_draw_str(canvas, 4, 54, "Wait for the full burst.");
+        canvas_draw_str(canvas, 4, 63, "BACK: CANCEL");
         break;
     case PageLearnDone: {
         draw_header(canvas, "PROFILE SAVED");
@@ -1397,11 +1469,25 @@ static void toggle_active_mode(AcMultiRemoteState* state) {
 }
 
 static void start_capture(AcMultiRemoteState* state, AppPage listen_page) {
-    if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) == FuriStatusOk) {
-        state->capturing = true;
-        state->capture_received = false;
-        furi_mutex_release(state->capture_mutex);
+    if(!state->capture_timings) {
+        state->capture_timings =
+            malloc(AC_CAPTURE_MAX_TIMINGS * sizeof(uint32_t));
     }
+    if(!state->capture_timings ||
+       furi_mutex_acquire(state->capture_mutex, FuriWaitForever) != FuriStatusOk) {
+        state->page = PageLearnFailed;
+        app_request_redraw(state);
+        return;
+    }
+
+    state->capturing = true;
+    state->capture_received = false;
+    state->capture_timings_count = 0U;
+    state->last_raw_signal_tick = 0U;
+    state->capture_last_signal_tick = 0U;
+    state->capture_is_raw = false;
+    state->capture_overflow = false;
+    furi_mutex_release(state->capture_mutex);
 
     state->page = listen_page;
     infrared_worker_rx_set_received_signal_callback(
@@ -1422,8 +1508,35 @@ static void stop_capture(AcMultiRemoteState* state) {
     }
 }
 
+static bool capture_activity_snapshot(AcMultiRemoteState* state, uint32_t* last_signal_tick) {
+    if(furi_mutex_acquire(state->capture_mutex, FuriWaitForever) != FuriStatusOk) return false;
+    const bool received = state->capture_received;
+    *last_signal_tick = state->capture_last_signal_tick;
+    furi_mutex_release(state->capture_mutex);
+    return received;
+}
+
 static void capture_completed(AcMultiRemoteState* state) {
     stop_capture(state);
+
+    if(state->capture_overflow) {
+        state->page = PageLearnFailed;
+        app_request_redraw(state);
+        return;
+    }
+    if(state->capture_is_raw) {
+        if(state->capture_timings_count == 0U) {
+            state->page = PageLearnFailed;
+            app_request_redraw(state);
+            return;
+        }
+        infrared_signal_set_raw_signal(
+            state->capture_signal,
+            state->capture_timings,
+            state->capture_timings_count,
+            INFRARED_COMMON_CARRIER_FREQUENCY,
+            INFRARED_COMMON_DUTY_CYCLE);
+    }
 
     if(state->page == PageListenNormal) {
         infrared_signal_set_signal(state->normal_signal, state->capture_signal);
@@ -1969,6 +2082,7 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
     bool ok_pending = false;
     uint32_t ok_tick = 0;
     const uint32_t double_click_ticks = furi_ms_to_ticks(OK_DOUBLE_CLICK_MS);
+    const uint32_t capture_quiet_ticks = furi_ms_to_ticks(AC_CAPTURE_QUIET_TIMEOUT_MS);
 
     while(state.running) {
         AppEvent event;
@@ -1979,11 +2093,23 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
             wait_ticks = (elapsed < double_click_ticks) ? (double_click_ticks - elapsed) : 0;
         }
 
+        if(state.page == PageListenNormal || state.page == PageListenOff) {
+            uint32_t last_signal_tick = 0U;
+            if(capture_activity_snapshot(&state, &last_signal_tick)) {
+                const uint32_t elapsed = furi_get_tick() - last_signal_tick;
+                const uint32_t capture_wait =
+                    elapsed < capture_quiet_ticks ? capture_quiet_ticks - elapsed : 0U;
+                if(wait_ticks == FuriWaitForever || capture_wait < wait_ticks) {
+                    wait_ticks = capture_wait;
+                }
+            }
+        }
+
         const FuriStatus status = furi_message_queue_get(state.event_queue, &event, wait_ticks);
         if(status == FuriStatusOk) {
             if(event.type == AppEventTypeSignalCaptured) {
                 if(state.page == PageListenNormal || state.page == PageListenOff) {
-                    capture_completed(&state);
+                    app_request_redraw(&state);
                 }
             } else if(event.input.key == InputKeyOk &&
                       event.input.type == InputTypeShort &&
@@ -2018,10 +2144,20 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
                 handle_input_event(&state, &event.input);
             }
             app_request_redraw(&state);
-        } else if(ok_pending) {
-            handle_single_ok(&state);
-            ok_pending = false;
-            app_request_redraw(&state);
+        } else {
+            if(state.page == PageListenNormal || state.page == PageListenOff) {
+                uint32_t last_signal_tick = 0U;
+                if(capture_activity_snapshot(&state, &last_signal_tick) &&
+                   (furi_get_tick() - last_signal_tick) >= capture_quiet_ticks) {
+                    capture_completed(&state);
+                    app_request_redraw(&state);
+                }
+            }
+            if(ok_pending) {
+                handle_single_ok(&state);
+                ok_pending = false;
+                app_request_redraw(&state);
+            }
         }
     }
 
@@ -2034,6 +2170,7 @@ int32_t gbhobbytech_ac_multi_remote_app(void* p) {
     infrared_worker_free(state.infrared_worker);
     furi_mutex_free(state.capture_mutex);
     furi_message_queue_free(state.event_queue);
+    free(state.capture_timings);
 
     return 0;
 }
