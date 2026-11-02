@@ -43,5 +43,5 @@ void ac_fujitsu_update_checksum(
     AcFujitsuVariant variant,
     uint8_t frame[AC_FUJITSU_MAX_STATE_BYTES]);
 
-uint8_t ac_fujitsu_min_temperature(AcFujitsuVariant variant);
-uint8_t ac_fujitsu_max_temperature(AcFujitsuVariant variant);
+uint8_t ac_fujitsu_min_temperature(void);
+uint8_t ac_fujitsu_max_temperature(void);
