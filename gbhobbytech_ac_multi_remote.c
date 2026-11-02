@@ -536,11 +536,11 @@ static void draw_wizard_menu(Canvas* canvas, const AcMultiRemoteState* state) {
     canvas_set_font(canvas, FontSecondary);
     for(size_t row = 0; row < MENU_VISIBLE_ROWS && top + row < count; row++) {
         const size_t index = top + row;
-        const int32_t baseline = 33 + (int32_t)row * 10;
+        const int32_t baseline = 33 + (int32_t)row * 9;
         wizard_menu_label(state, index, label, sizeof(label));
 
         if(index == selected) {
-            canvas_draw_rbox(canvas, 2, baseline - 8, 120, 10, 1);
+            canvas_draw_rbox(canvas, 2, baseline - 7, 120, 9, 1);
             canvas_set_color(canvas, ColorWhite);
             draw_str_bold(canvas, 5, baseline, label);
             canvas_set_color(canvas, ColorBlack);
@@ -640,7 +640,7 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
     case PageNoBrandProtocols:
         draw_header(canvas, "NO TESTS FOR BRAND YET");
         canvas_draw_str(canvas, 4, 36, "Learn from its remote");
-        canvas_draw_str(canvas, 4, 48, "to use this unit.");
+        canvas_draw_str(canvas, 4, 46, "to use this unit.");
         draw_short_ok_hint(canvas, 4, 63, "LEARN REMOTE");
         canvas_draw_str(canvas, 97, 63, "BACK");
         break;
@@ -649,29 +649,29 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
             state->room_probe_variants[state->room_probe_position];
         draw_header(canvas, "TRY PROTOCOL IN ROOM");
         draw_variant_name(canvas, 4, 34, variant_index);
-        canvas_draw_str(canvas, 4, 45, "Sends ON: COOL 24C AUTO");
-        canvas_draw_str(canvas, 4, 55, "Aim at unit.");
+        canvas_draw_str(canvas, 4, 43, "Sends ON: COOL 24C AUTO");
+        canvas_draw_str(canvas, 4, 52, "Aim at unit.");
         draw_short_ok_hint(canvas, 4, 63, "SEND");
         canvas_draw_str(canvas, 82, 63, "BACK");
         break;
     }
     case PageRoomProbeQuestion:
         draw_header(canvas, "DID THE UNIT RESPOND?");
-        canvas_draw_str(canvas, 4, 36, "Did it beep or start?");
-        draw_left_arrow(canvas, 6, 48);
-        canvas_draw_str(canvas, 14, 52, "NO");
-        draw_right_arrow(canvas, 46, 48);
-        canvas_draw_str(canvas, 54, 52, "YES");
+        canvas_draw_str(canvas, 4, 34, "Did it beep or start?");
+        draw_left_arrow(canvas, 6, 46);
+        canvas_draw_str(canvas, 14, 50, "NO");
+        draw_right_arrow(canvas, 46, 46);
+        canvas_draw_str(canvas, 54, 50, "YES");
         canvas_draw_str(canvas, 4, 63, "BACK: BRANDS");
         break;
     case PageRoomProbeSaved:
         draw_header(canvas, "PROTOCOL CONFIRMED");
-        draw_variant_name(canvas, 4, 36, state->expected_variant);
+        draw_variant_name(canvas, 4, 34, state->expected_variant);
         const AcProtocolVariant* variant = ac_variant_get(state->expected_variant);
         canvas_draw_str(
             canvas,
             4,
-            48,
+            46,
             (variant && variant->supports_state_control) ?
                 "DIRECT CONTROL READY" :
                 "POWER REPLAY READY");
@@ -679,37 +679,37 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         break;
     case PageRoomProbeFailed:
         draw_header(canvas, "NO TEST RESPONDED");
-        canvas_draw_str(canvas, 4, 36, "No protocol matched.");
-        canvas_draw_str(canvas, 4, 48, "Learn from the original remote.");
+        canvas_draw_str(canvas, 4, 34, "No protocol matched.");
+        canvas_draw_str(canvas, 4, 46, "Learn from the original remote.");
         draw_short_ok_hint(canvas, 4, 63, "LEARN REMOTE");
         canvas_draw_str(canvas, 91, 63, "BACK");
         break;
     case PageLearnNormal:
         draw_header(canvas, "LEARN NORMAL STATE");
         canvas_draw_str(canvas, 4, 34, "Set the AC to usual settings.");
-        canvas_draw_str(canvas, 4, 45, "Point remote at Flipper.");
-        canvas_draw_str(canvas, 4, 56, "Choose any setting button.");
+        canvas_draw_str(canvas, 4, 43, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 52, "Choose any setting button.");
         draw_short_ok_hint(canvas, 4, 63, "LISTEN");
         canvas_draw_str(canvas, 101, 63, "BACK");
         break;
     case PageListenNormal:
         draw_header(canvas, "LISTENING FOR NORMAL");
-        canvas_draw_str(canvas, 4, 36, "Point remote at Flipper.");
-        canvas_draw_str(canvas, 4, 47, "Press a setting button.");
+        canvas_draw_str(canvas, 4, 34, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 44, "Press a setting button.");
         canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
         break;
     case PageLearnOff:
         draw_header(canvas, "LEARN OFF STATE");
         canvas_draw_str(canvas, 4, 34, "Unit should be on.");
-        canvas_draw_str(canvas, 4, 45, "Point remote at Flipper.");
-        canvas_draw_str(canvas, 4, 56, "Press POWER to switch it off.");
+        canvas_draw_str(canvas, 4, 43, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 52, "Press POWER to switch it off.");
         draw_short_ok_hint(canvas, 4, 63, "LISTEN");
         canvas_draw_str(canvas, 101, 63, "BACK");
         break;
     case PageListenOff:
         draw_header(canvas, "LISTENING FOR OFF");
-        canvas_draw_str(canvas, 4, 36, "Point remote at Flipper.");
-        canvas_draw_str(canvas, 4, 47, "Press POWER to turn off.");
+        canvas_draw_str(canvas, 4, 34, "Point remote at Flipper.");
+        canvas_draw_str(canvas, 4, 44, "Press POWER to turn off.");
         canvas_draw_str(canvas, 4, 58, "BACK: CANCEL");
         break;
     case PageLearnDone: {
@@ -732,22 +732,22 @@ static void draw_learning_screen(Canvas* canvas, const AcMultiRemoteState* state
         const AcProtocolVariant* variant =
             (learned_variant != SIZE_MAX) ? ac_variant_get(learned_variant) : NULL;
         if(variant) {
-            draw_variant_name(canvas, 4, 43, learned_variant);
+            draw_variant_name(canvas, 4, 41, learned_variant);
         } else {
-            canvas_draw_str(canvas, 4, 43, "Replay only: on / off.");
+            canvas_draw_str(canvas, 4, 41, "Replay only: on / off.");
         }
         if(state->has_expected_variant && !expected_seen) {
-            canvas_draw_str(canvas, 4, 53, "Chosen protocol not seen.");
+            canvas_draw_str(canvas, 4, 49, "Chosen protocol not seen.");
         } else if(variant && !variant->supports_state_control) {
-            canvas_draw_str(canvas, 4, 53, "POWER REPLAY ONLY");
+            canvas_draw_str(canvas, 4, 49, "POWER REPLAY ONLY");
         }
         draw_short_ok_hint(canvas, 4, 63, "RETURN TO CONTROLS");
         break;
     }
     case PageLearnFailed:
         draw_header(canvas, "LEARNING FAILED");
-        canvas_draw_str(canvas, 4, 36, "Could not save this profile.");
-        canvas_draw_str(canvas, 4, 48, "BACK: RETURN TO UNITS");
+        canvas_draw_str(canvas, 4, 34, "Could not save this profile.");
+        canvas_draw_str(canvas, 4, 46, "BACK: RETURN TO UNITS");
         break;
     default:
         break;
