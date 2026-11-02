@@ -24,7 +24,7 @@
 #include <stdint.h>
 #include <infrared/signal/infrared_signal.h>
 
-#define AC_IDENTIFY_MAX_MATCHES 8U
+#define AC_IDENTIFY_MAX_MATCHES 12U
 
 typedef struct {
     const char* name; /* Display name, upper case, <= 20 chars. */
