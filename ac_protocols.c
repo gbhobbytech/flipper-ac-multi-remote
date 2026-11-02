@@ -1,6 +1,7 @@
 #include "ac_protocols.h"
 #include "ac_mitsubishi.h"
 #include "ac_mhi.h"
+#include "ac_mitsubishi_legacy.h"
 
 #define AC_PROBE_TEMP_C 24U
 #define AC_PROBE_DUTY_CYCLE INFRARED_COMMON_DUTY_CYCLE
@@ -16,6 +17,38 @@ static bool match_mitsubishi_ac_144(const InfraredSignal* signal) {
     uint8_t frame[AC_MITSUBISHI_FRAME_BYTES];
     size_t prefix_count = 0;
     return ac_mitsubishi_decode_profile(signal, frame, matcher_prefix_scratch, &prefix_count);
+}
+
+static bool match_mitsubishi_legacy_variant(
+    const InfraredSignal* signal,
+    AcMitsubishiLegacyVariant expected_variant) {
+    AcMitsubishiLegacyVariant detected_variant = AcMitsubishiLegacyNone;
+    uint8_t frame[AC_MITSUBISHI_LEGACY_MAX_FRAME_BYTES];
+    return ac_mitsubishi_legacy_decode(signal, &detected_variant, frame) &&
+           detected_variant == expected_variant;
+}
+
+static bool match_mitsubishi_112(const InfraredSignal* signal) {
+    return match_mitsubishi_legacy_variant(signal, AcMitsubishiLegacy112);
+}
+
+static bool match_mitsubishi_136(const InfraredSignal* signal) {
+    return match_mitsubishi_legacy_variant(signal, AcMitsubishiLegacy136);
+}
+
+static bool build_mitsubishi_legacy_probe(
+    AcMitsubishiLegacyVariant variant,
+    bool power_on,
+    InfraredSignal* signal) {
+    return ac_mitsubishi_legacy_build_probe(variant, power_on, signal);
+}
+
+static bool build_mitsubishi_112_probe(bool power_on, InfraredSignal* signal) {
+    return build_mitsubishi_legacy_probe(AcMitsubishiLegacy112, power_on, signal);
+}
+
+static bool build_mitsubishi_136_probe(bool power_on, InfraredSignal* signal) {
+    return build_mitsubishi_legacy_probe(AcMitsubishiLegacy136, power_on, signal);
 }
 
 static bool match_mitsubishi_heavy_variant(
@@ -118,7 +151,10 @@ static const AcProtocolFamily families[] = {
 };
 
 enum {
+    /* Keep the known working baseline first in the Mitsubishi Electric list. */
     VariantMitsubishiAc144,
+    VariantMitsubishiAc112,
+    VariantMitsubishiAc136,
     VariantMitsubishiHeavy88,
     VariantMitsubishiHeavy152,
 };
@@ -132,6 +168,24 @@ static const AcProtocolVariant variants[] = {
             .supports_room_probe = true,
             .matches = match_mitsubishi_ac_144,
             .build_probe_signal = build_mitsubishi_ac_probe,
+        },
+    [VariantMitsubishiAc112] =
+        {
+            .family = FamilyMitsubishiAc,
+            .name = "112-BIT",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_mitsubishi_112,
+            .build_probe_signal = build_mitsubishi_112_probe,
+        },
+    [VariantMitsubishiAc136] =
+        {
+            .family = FamilyMitsubishiAc,
+            .name = "136-BIT",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_mitsubishi_136,
+            .build_probe_signal = build_mitsubishi_136_probe,
         },
     [VariantMitsubishiHeavy88] =
         {
