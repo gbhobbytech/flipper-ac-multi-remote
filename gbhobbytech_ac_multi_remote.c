@@ -14,6 +14,7 @@
 #include "ac_mitsubishi_legacy.h"
 #include "ac_mhi.h"
 #include "ac_gree.h"
+#include "ac_fujitsu.h"
 #include "ac_protocols.h"
 
 #define EVENT_QUEUE_SIZE 12U
@@ -112,9 +113,12 @@ typedef struct {
     uint8_t gree_frame[AC_GREE_STATE_BYTES];
     AcGreeModel gree_model;
     AcMhiVariant mhi_variant;
+    AcFujitsuVariant fujitsu_variant;
+    uint8_t fujitsu_frame[AC_FUJITSU_MAX_STATE_BYTES];
     uint8_t mhi_mode;
     bool mhi_supported;
     bool gree_supported;
+    bool fujitsu_supported;
     bool state_control_supported;
     bool power_on;
     bool preview_power_on;
@@ -135,6 +139,7 @@ static const char* const wizard_method_names[] = {
 static uint8_t active_fan_count(const AcMultiRemoteState* state) {
     if(state->mhi_supported) return (uint8_t)FAN_SPEED_COUNT;
     if(state->gree_supported) return 4U;
+    if(state->fujitsu_supported) return 5U;
     if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
         return ac_mitsubishi_legacy_fan_count(state->mitsubishi_legacy_variant);
     }
@@ -144,6 +149,10 @@ static uint8_t active_fan_count(const AcMultiRemoteState* state) {
 static const char* active_fan_name(const AcMultiRemoteState* state) {
     static const char* const legacy_fan_names[] = {"QUIET", "LOW", "MED", "MAX"};
     static const char* const gree_fan_names[] = {"AUTO", "LOW", "MED", "MAX"};
+    static const char* const fujitsu_fan_names[] = {"AUTO", "LOW", "MED", "HIGH", "QUIET"};
+    if(state->fujitsu_supported && state->fan_speed < 5U) {
+        return fujitsu_fan_names[state->fan_speed];
+    }
     if(state->gree_supported && state->fan_speed < 4U) {
         return gree_fan_names[state->fan_speed];
     }
@@ -304,7 +313,9 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
     char mode_text[12];
 
     if(state->active_profile_id && state->state_control_supported) {
-        const uint8_t mode_code = state->mhi_supported ?
+        const uint8_t mode_code = state->fujitsu_supported ?
+                                      (state->fujitsu_frame[9] & 0x07U) :
+                                  state->mhi_supported ?
                                      state->mhi_mode :
                                      (state->gree_supported ?
                                           (state->gree_frame[0] & 0x07U) :
@@ -312,7 +323,13 @@ static void draw_control_screen(Canvas* canvas, const AcMultiRemoteState* state)
                                                (state->mitsubishi_legacy_frame[6] & 0x07U) :
                                                (uint8_t)((state->mitsubishi_frame[6] >> 3) & 0x07U)));
         const char* mode_name = "UNKNOWN";
-        if(state->mhi_supported) {
+        if(state->fujitsu_supported) {
+            if(mode_code == 0U) mode_name = "AUTO";
+            else if(mode_code == 1U) mode_name = "COOL";
+            else if(mode_code == 2U) mode_name = "DRY";
+            else if(mode_code == 3U) mode_name = "FAN";
+            else if(mode_code == 4U) mode_name = "HEAT";
+        } else if(state->mhi_supported) {
             if(mode_code == (uint8_t)AcMhiModeAuto) mode_name = "AUTO";
             else if(mode_code == (uint8_t)AcMhiModeCool) mode_name = "COOL";
             else if(mode_code == (uint8_t)AcMhiModeDry) mode_name = "DRY";
@@ -995,6 +1012,8 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
     state->state_control_supported = false;
     state->mhi_supported = false;
     state->gree_supported = false;
+    state->fujitsu_supported = false;
+    state->fujitsu_variant = AcFujitsuVariantUnknown;
     state->mitsubishi_prefix_count = 0U;
 
     char path[96];
@@ -1006,6 +1025,7 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
     bool mitsubishi_legacy_decoded = false;
     bool mhi_decoded = false;
     bool gree_decoded = false;
+    bool fujitsu_decoded = false;
     state->mitsubishi_legacy_variant = AcMitsubishiLegacyNone;
 
     if(flipper_format_file_open_existing(format, path)) {
@@ -1027,6 +1047,11 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
             if(!mitsubishi_decoded && !mitsubishi_legacy_decoded && !mhi_decoded) {
                 gree_decoded = ac_gree_decode_signal(
                     signal, &state->gree_model, state->gree_frame);
+            }
+            if(!mitsubishi_decoded && !mitsubishi_legacy_decoded && !mhi_decoded &&
+               !gree_decoded) {
+                fujitsu_decoded = ac_fujitsu_decode_signal(
+                    signal, &state->fujitsu_variant, state->fujitsu_frame);
             }
         }
         flipper_format_file_close(format);
@@ -1078,6 +1103,35 @@ static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profil
             &state->temperature_c,
             &mode_code,
             &state->fan_speed);
+    }
+
+    if(fujitsu_decoded) {
+        /* Keep swing state out of every direct-control transmission. */
+        state->fujitsu_frame[10] &= (uint8_t)~0x30U;
+        ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
+        state->state_control_supported = true;
+        state->fujitsu_supported = true;
+        const uint8_t raw_temp = (state->fujitsu_frame[8] >> 2) & 0x3FU;
+        state->temperature_c = state->fujitsu_variant == AcFujitsuVariantLong31 ?
+                                   (uint8_t)(8U + raw_temp / 2U) :
+                                   (uint8_t)(16U + raw_temp / 4U);
+        state->power_on = (state->fujitsu_frame[8] & 0x01U) != 0U;
+        const uint8_t fan_code = state->fujitsu_frame[10] & 0x07U;
+        switch(fan_code) {
+        case 0U: state->fan_speed = 0U; break;
+        case 3U: state->fan_speed = 1U; break;
+        case 2U: state->fan_speed = 2U; break;
+        case 1U: state->fan_speed = 3U; break;
+        case 4U: state->fan_speed = 4U; break;
+        default: state->fan_speed = 0U; break;
+        }
+        if(state->temperature_c < ac_fujitsu_min_temperature(state->fujitsu_variant)) {
+            state->temperature_c = ac_fujitsu_min_temperature(state->fujitsu_variant);
+        }
+        if(state->temperature_c > ac_fujitsu_max_temperature(state->fujitsu_variant)) {
+            state->temperature_c = ac_fujitsu_max_temperature(state->fujitsu_variant);
+        }
+        return true;
     }
 
     if(mhi_decoded) {
@@ -1234,6 +1288,7 @@ static bool transmit_mhi_state(AcMultiRemoteState* state) {
 }
 
 static bool transmit_active_state(AcMultiRemoteState* state) {
+    if(state->fujitsu_supported) return ac_fujitsu_transmit(state->fujitsu_variant, state->fujitsu_frame);
     if(state->mhi_supported) return transmit_mhi_state(state);
     if(state->gree_supported) return ac_gree_transmit(state->gree_model, state->gree_frame);
     if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
@@ -1244,6 +1299,13 @@ static bool transmit_active_state(AcMultiRemoteState* state) {
 }
 
 static void update_active_power(AcMultiRemoteState* state, bool power_on) {
+    if(state->fujitsu_supported) {
+        if(power_on) state->fujitsu_frame[8] |= 0x01U;
+        else state->fujitsu_frame[8] &= (uint8_t)~0x01U;
+        ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
+        if(transmit_active_state(state)) state->power_on = power_on;
+        return;
+    }
     if(state->mhi_supported) {
         const bool previous_power = state->power_on;
         state->power_on = power_on;
@@ -1274,6 +1336,14 @@ static void update_active_power(AcMultiRemoteState* state, bool power_on) {
 }
 
 static void toggle_active_mode(AcMultiRemoteState* state) {
+    if(state->fujitsu_supported) {
+        const uint8_t current = state->fujitsu_frame[9] & 0x07U;
+        const uint8_t next = current == 1U ? 4U : 1U;
+        state->fujitsu_frame[9] = (uint8_t)((state->fujitsu_frame[9] & 0xF8U) | next);
+        ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
+        transmit_active_state(state);
+        return;
+    }
     if(state->mhi_supported) {
         state->mhi_mode =
             (state->mhi_mode == (uint8_t)AcMhiModeCool) ?
@@ -1656,17 +1726,19 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
         const uint8_t minimum_temperature =
             state->mhi_supported ?
                 (uint8_t)MHI_TEMP_MIN :
+                (state->fujitsu_supported ? ac_fujitsu_min_temperature(state->fujitsu_variant) :
                 (state->gree_supported ? 16U :
                  (state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone ?
                      ac_mitsubishi_legacy_min_temperature(state->mitsubishi_legacy_variant) :
-                     (uint8_t)MITSUBISHI_TEMP_MIN));
+                     (uint8_t)MITSUBISHI_TEMP_MIN)));
         const uint8_t maximum_temperature =
             state->mhi_supported ?
                 (uint8_t)MHI_TEMP_MAX :
+                (state->fujitsu_supported ? ac_fujitsu_max_temperature(state->fujitsu_variant) :
                 (state->gree_supported ? 30U :
                  (state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone ?
                      ac_mitsubishi_legacy_max_temperature(state->mitsubishi_legacy_variant) :
-                     (uint8_t)MITSUBISHI_TEMP_MAX));
+                     (uint8_t)MITSUBISHI_TEMP_MAX)));
         const uint8_t fan_count = active_fan_count(state);
         switch(event->key) {
         case InputKeyUp:
@@ -1674,6 +1746,12 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
                 state->temperature_c++;
                 if(state->gree_supported) {
                     ac_gree_set_temperature(state->gree_frame, state->temperature_c);
+                } else if(state->fujitsu_supported) {
+                    const uint8_t temp_field = state->fujitsu_variant == AcFujitsuVariantLong31 ?
+                                                  (uint8_t)((state->temperature_c - 8U) * 2U) :
+                                                  (uint8_t)((state->temperature_c - 16U) * 4U);
+                    state->fujitsu_frame[8] = (uint8_t)((state->fujitsu_frame[8] & 0x01U) | (temp_field << 2));
+                    ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
                 } else if(!state->mhi_supported) {
                     if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
                         ac_mitsubishi_legacy_set_temperature(
@@ -1694,6 +1772,12 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
                 state->temperature_c--;
                 if(state->gree_supported) {
                     ac_gree_set_temperature(state->gree_frame, state->temperature_c);
+                } else if(state->fujitsu_supported) {
+                    const uint8_t temp_field = state->fujitsu_variant == AcFujitsuVariantLong31 ?
+                                                  (uint8_t)((state->temperature_c - 8U) * 2U) :
+                                                  (uint8_t)((state->temperature_c - 16U) * 4U);
+                    state->fujitsu_frame[8] = (uint8_t)((state->fujitsu_frame[8] & 0x03U) | (temp_field << 2));
+                    ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
                 } else if(!state->mhi_supported) {
                     if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
                         ac_mitsubishi_legacy_set_temperature(
@@ -1726,7 +1810,15 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
         }
 
         if(changed) {
-            if(state->mhi_supported) {
+            if(state->fujitsu_supported) {
+                static const uint8_t fujitsu_fan_codes[5] = {0U, 3U, 2U, 1U, 4U};
+                state->fujitsu_frame[10] =
+                    (uint8_t)((state->fujitsu_frame[10] & 0xF8U) | fujitsu_fan_codes[state->fan_speed]);
+                /* Swing bits are deliberately never set or toggled. */
+                state->fujitsu_frame[10] &= (uint8_t)~0x30U;
+                ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
+                transmit_active_state(state);
+            } else if(state->mhi_supported) {
                 transmit_mhi_state(state);
             } else if(state->gree_supported) {
                 ac_gree_set_fan(state->gree_frame, state->fan_speed);
