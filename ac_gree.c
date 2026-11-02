@@ -202,12 +202,13 @@ static bool build_model_state(
         return false;
     }
     memset(frame, 0, AC_GREE_STATE_BYTES);
+    /* Keep SwingAuto and Sleep clear in byte 0 for a neutral probe state. */
     frame[0] = (uint8_t)((model == AcGreeModelYx1fsf ? GREE_MODE_ECONO : GREE_MODE_COOL) |
-                         (power_on ? 0x08U : 0U) | 0x40U);
+                         (power_on ? 0x08U : 0U));
     frame[1] = (uint8_t)(GREE_PROBE_TEMP_C - GREE_MIN_TEMP_C);
     frame[2] = (uint8_t)(0x20U | ((model == AcGreeModelYaw1f && power_on) ? 0x40U : 0U));
     frame[3] = 0x50U;
-    frame[4] = 0x01U;
+    frame[4] = 0x00U; /* Leave vertical and horizontal swing unchanged. */
     frame[5] = 0x21U; /* Display set temperature and fixed protocol bits. */
     update_checksum(frame);
     return true;
