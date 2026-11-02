@@ -229,7 +229,7 @@ static void received_signal_callback(void* context, InfraredWorkerSignal* receiv
 
 static void draw_header(Canvas* canvas, const char* heading) {
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 4, 10, "AC MULTI REMOTE");
+    canvas_draw_str(canvas, 4, 10, "A/C MASTER");
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 4, 20, heading);
     canvas_draw_line(canvas, 4, 23, 123, 23);
