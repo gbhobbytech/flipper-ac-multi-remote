@@ -1,49 +1,71 @@
 # A/C Master for Flipper Zero
 
-A simple infrared controller for air conditioners, built as a Flipper Zero external app.
+A multi-profile infrared controller for compatible air conditioners. A/C Master can send direct state commands for supported protocols, guide protocol discovery in a room, or learn and replay basic signals from an existing remote.
 
-## Project direction
+## Features
 
-- Keep the main control screen simple: power, temperature, and fan speed.
-- Use double-click OK to switch between **Control** and **Select Unit** keypad modes.
-- On **Select Unit**, short OK uses the selected unit, long OK opens **Rename / Delete**, and double-click OK returns to **Control**.
-- Store reusable remote profiles by protocol family, with optional user nicknames.
-- Use a guided setup flow to identify supported protocols or learn and replay verified AC states.
-- When a learned protocol cannot be interpreted, offer captured states as presets instead of claiming unavailable controls.
+- Control power, temperature, mode and fan speed when a profile has a supported decoded protocol.
+- Save multiple unit profiles and give each one a useful name.
+- Identify a unit by manufacturer and try the bundled protocol variants with a simple Yes/No confirmation.
+- Learn and replay Normal and Off signals for units without direct state support.
+- Store profiles on the Flipper Zero microSD card.
 
-## Current development status
+## Supported protocol families
 
-The app has a guided raw-signal learning flow for a normal/on state and an off state. It saves each completed profile to the Flipper microSD card.
+The bundled protocol library includes Mitsubishi Electric, Mitsubishi Heavy Industries (MHI), Gree and Fujitsu variants.
 
-When the Normal capture contains a valid Mitsubishi Electric state frame, the app recognises it and enables direct power, temperature, fan, and mode controls. The known-working 144-bit pathway remains first in the Mitsubishi Electric trial order and was tested with an SG17B remote and an MSZ-AG35VGD-family unit. The 112-bit and 136-bit Mitsubishi Electric pathways are included after it, with direct state controls and room-probe commands; they still need physical Flipper and unit testing before being treated as confirmed. Their native temperature and fan ranges are used, including the four-level fan scale on these variants. For the 144-bit profile, the app preserves the learned command prefix and updates the state frame and checksum before transmitting.
+- **Mitsubishi Electric:** the 144-bit pathway is the confirmed baseline. The 112-bit and 136-bit pathways are included but need further hardware verification.
+- **MHI:** 88-bit and 152-bit pathways are included. The MHI control path has been confirmed on a local unit.
+- **Gree:** YAW1F, YBOFB and YX1FSF variants are included; local hardware verification is still needed.
+- **Fujitsu:** 0x30, compact 0xFC and 0x31 variants are included; local hardware verification is still needed. Fujitsu swing commands are deliberately excluded from probes.
 
-### Adding a unit: identification wizard
+Protocol compatibility can vary between models. A successful probe should be confirmed by the user before saving a profile. If direct state control is unavailable, learned profiles can replay the saved Normal and Off signals; temperature, mode and fan controls are not available for those profiles.
 
-From **Select Unit**, press Down to add a unit. The wizard starts with two choices:
+## Controls
 
-- **Identify Unit:** choose the brand printed on the indoor unit, then try only the in-room protocols registered for that manufacturer. Before each test, the app explains the command it will send. The user confirms **Yes** if the unit responds or **No** to try the next protocol. Choosing **Not sure: try all** tests every in-room protocol currently available in the catalogue.
-- **Learn Remote:** capture the unit's normal On state and its Off state, then save them for replay.
+On the control screen:
 
-The in-room trial catalogue includes Mitsubishi Electric in this order: 144-bit, 112-bit, then 136-bit; Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit; Gree in this order: YAW1F, YBOFB, then YX1FSF; and Fujitsu in this order: 16-byte protocol 0x30, compact 15-byte protocol 0xFC, then 16-byte protocol 0x31. The Mitsubishi Electric 144-bit path is the confirmed baseline, and the MHI control path has been confirmed locally. The other listed trials still need local hardware verification. Gree and Fujitsu profiles decode state frames for direct power, temperature, mode, and fan control. If all tests for a selected brand fail, the wizard offers Learn Remote as the fallback. Confirming a successful test saves the unit and returns to the control screen.
+- Up / Down: adjust temperature.
+- Left / Right: adjust fan speed.
+- Short OK: toggle power.
+- Long OK: change mode when supported.
+- Double-click OK: open or leave Select Unit.
 
-Brands, protocol families, variants, and remote-code references live in `ac_protocols.c`. Protocol families are linked to their manufacturer so the wizard can filter tests by brand. Mitsubishi Electric and Mitsubishi Heavy Industries are separate manufacturers with unrelated protocols. Fujitsu protocol variants and their probe order are included in the bundled catalogue.
+On Select Unit:
 
-Mitsubishi Heavy Industries (MHI) 88-bit and 152-bit captures can be identified from their raw signal signatures. The bundled `ac_mhi.c` module builds complete frames and raw timings for both variants, and confirmed MHI profiles use the main screen's direct power, temperature, mode, and fan controls. The MHI control path has been confirmed working on a local unit. The listed MHI remote-code mappings remain reference leads and have not been verified against a physical remote; they are not part of the current setup flow.
-Fujitsu support groups six remote models into three distinct safe baselines: ARRAH2E/ARREB1E/ARRY4 share the 16-byte 0x30 probe when optional features are off; ARDB1/ARJW2 share the compact frame when swing is off; and ARREW4E uses 16-byte 0x31. The app explicitly clears swing state and does not send Fujitsu swing-step or swing-toggle commands. The tested room still needs a Yes/No response for the user to confirm which baseline controls it. For other raw profiles, the app continues to replay the learned Normal and Off signals and shows that temperature and fan are not decoded. Without a saved profile, the screen remains in preview mode.
+- Left / Right: browse saved units.
+- Short OK: use the selected unit.
+- Down: start adding a unit.
+- Long OK: open Rename / Delete.
 
-## Build
+## Add a unit
 
-From the project directory, with uFBT installed:
+Choose **Identify Unit** to select a manufacturer and try its known protocol variants. A/C Master sends a test state and asks whether the unit responded. Confirm a successful result to save the profile. If identification does not work, choose **Learn Remote** to capture Normal and Off signals from an existing remote.
+
+## Build and run
+
+Install uFBT, then run from the project directory:
 
 ```sh
 ufbt
 ```
 
-The built application is written to `dist/`.
+The FAP is created in `dist/gbhobbytech_ac_multi_remote.fap`. To build, upload and launch over USB, run:
 
-## Planned milestones
+```sh
+ufbt launch
+```
 
-1. Confirm the main screen and keypad interaction on the Flipper.
-2. Add an infrared capture and replay flow for learned states.
-3. Save and select user profiles.
-4. Extend protocol recognition to additional AC families and learned preset controls.
+To install it persistently, copy the FAP to **SD Card/apps/Infrared** with qFlipper.
+
+## Screenshots
+
+Catalog screenshots are being prepared from the running app using qFlipper. They will be added here after capture.
+
+## Profile storage
+
+Profiles are stored under `apps_data/gbhobbytech_ac_multi_remote` on the Flipper Zero microSD card.
+
+## License
+
+A/C Master is licensed under the MIT License. See [LICENSE](LICENSE).
