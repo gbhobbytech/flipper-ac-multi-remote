@@ -393,7 +393,7 @@ static const AcProtocolVariant variants[] = {
         {
             .family = FamilyLg,
             .name = "LG 28-BIT",
-            .supports_state_control = false,
+            .supports_state_control = true,
             .supports_room_probe = true,
             .matches = match_lg,
             .build_probe_signal = build_lg_probe,
@@ -402,7 +402,7 @@ static const AcProtocolVariant variants[] = {
         {
             .family = FamilyLg,
             .name = "LG2 28-BIT",
-            .supports_state_control = false,
+            .supports_state_control = true,
             .supports_room_probe = true,
             .matches = match_lg2,
             .build_probe_signal = build_lg2_probe,
