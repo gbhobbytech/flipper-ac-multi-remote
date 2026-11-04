@@ -17,7 +17,6 @@
 #define LG_FOOTER_GAP 39750U
 #define LG_FRAME_BITS 28U
 #define LG_RAW_TIMINGS (2U + (LG_FRAME_BITS * 2U) + 2U)
-#define LG_FRAME_ON_COOL24_AUTO 0x880095EU
 #define LG_FRAME_OFF 0x88C0051U
 #define LG_SIGNATURE 0x88U
 
@@ -109,11 +108,75 @@ static bool decode_frame(
     return false;
 }
 
-bool ac_lg_matches_variant(const InfraredSignal* signal, AcLgVariant variant) {
-    if(!signal || !infrared_signal_is_raw(signal)) return false;
+bool ac_lg_decode_signal(const InfraredSignal* signal, AcLgVariant* variant, uint32_t* frame) {
+    if(!signal || !variant || !frame || !infrared_signal_is_raw(signal)) return false;
     const InfraredRawSignal* raw = infrared_signal_get_raw_signal(signal);
+    if(decode_frame(raw, AcLgVariantLg, frame)) {
+        *variant = AcLgVariantLg;
+        return true;
+    }
+    if(decode_frame(raw, AcLgVariantLg2, frame)) {
+        *variant = AcLgVariantLg2;
+        return true;
+    }
+    return false;
+}
+
+bool ac_lg_matches_variant(const InfraredSignal* signal, AcLgVariant variant) {
+    AcLgVariant found = AcLgVariantLg;
     uint32_t frame = 0U;
-    return decode_frame(raw, variant, &frame);
+    return ac_lg_decode_signal(signal, &found, &frame) && found == variant;
+}
+
+/* LG 28-bit A/C state:
+ * [27:20] signature 0x88, [19:18] power, [14:12] mode,
+ * [11:8] temperature minus 15, [7:4] fan, [3:0] checksum.
+ * Off is a dedicated command rather than an ordinary state frame.
+ * Fan codes follow the common LG A/C reference; models may differ.
+ */
+bool ac_lg_read_controls(
+    uint32_t frame, bool* power_on, uint8_t* temperature_c,
+    uint8_t* mode_code, uint8_t* fan_index) {
+    if(!valid_frame(frame) || !power_on || !temperature_c || !mode_code || !fan_index)
+        return false;
+    if(frame == LG_FRAME_OFF) {
+        *power_on = false;
+        *temperature_c = 24U;
+        *mode_code = AC_LG_MODE_COOL;
+        *fan_index = 0U;
+        return true;
+    }
+    if(((frame >> 18U) & 3U) != 0U) return false;
+    const uint8_t mode = (frame >> 12U) & 7U;
+    const uint8_t temp = 15U + ((frame >> 8U) & 15U);
+    if((mode != AC_LG_MODE_COOL && mode != AC_LG_MODE_HEAT) ||
+       temp < 16U || temp > 30U) return false;
+    const uint8_t fan = (frame >> 4U) & 15U;
+    *fan_index = fan == 5U ? 0U : fan == 1U ? 1U : fan == 2U ? 2U :
+                 (fan == 4U || fan == 10U) ? 3U : 0U;
+    *power_on = true;
+    *temperature_c = temp;
+    *mode_code = mode;
+    return true;
+}
+
+bool ac_lg_build_state(
+    bool power_on, uint8_t temperature_c, uint8_t mode_code,
+    uint8_t fan_index, uint32_t* frame) {
+    if(!frame || (mode_code != AC_LG_MODE_COOL && mode_code != AC_LG_MODE_HEAT) ||
+       temperature_c < 16U || temperature_c > 30U || fan_index > 3U)
+        return false;
+    if(!power_on) {
+        *frame = LG_FRAME_OFF;
+        return true;
+    }
+    static const uint8_t fan_codes[4] = {5U, 1U, 2U, 4U};
+    uint32_t result = (LG_SIGNATURE << 20U) |
+                      ((uint32_t)mode_code << 12U) |
+                      ((uint32_t)(temperature_c - 15U) << 8U) |
+                      ((uint32_t)fan_codes[fan_index] << 4U);
+    *frame = result | checksum(result);
+    return valid_frame(*frame);
 }
 
 bool ac_lg_build_probe(AcLgVariant variant, bool power_on, InfraredSignal* signal) {
@@ -124,8 +187,8 @@ bool ac_lg_build_probe(AcLgVariant variant, bool power_on, InfraredSignal* signa
     uint32_t bit_mark = 0U;
     if(!protocol_timing(variant, &header_mark, &header_space, &bit_mark)) return false;
 
-    const uint32_t frame = power_on ? LG_FRAME_ON_COOL24_AUTO : LG_FRAME_OFF;
-    if(!valid_frame(frame)) return false;
+    uint32_t frame = 0U;
+    if(!ac_lg_build_state(power_on, 24U, AC_LG_MODE_COOL, 0U, &frame)) return false;
 
     uint32_t timings[LG_RAW_TIMINGS];
     size_t count = 0U;
@@ -140,5 +203,33 @@ bool ac_lg_build_probe(AcLgVariant variant, bool power_on, InfraredSignal* signa
 
     infrared_signal_set_raw_signal(
         signal, timings, count, 38000U, INFRARED_COMMON_DUTY_CYCLE);
+    return true;
+}
+
+bool ac_lg_transmit(
+    AcLgVariant variant, bool power_on, uint8_t temperature_c,
+    uint8_t mode_code, uint8_t fan_index) {
+    uint32_t frame = 0U;
+    if(!ac_lg_build_state(power_on, temperature_c, mode_code, fan_index, &frame))
+        return false;
+    uint32_t header_mark = 0U, header_space = 0U, bit_mark = 0U;
+    if(!protocol_timing(variant, &header_mark, &header_space, &bit_mark))
+        return false;
+    uint32_t timings[LG_RAW_TIMINGS];
+    size_t count = 0U;
+    timings[count++] = header_mark;
+    timings[count++] = header_space;
+    for(int bit = (int)LG_FRAME_BITS - 1; bit >= 0; bit--) {
+        timings[count++] = bit_mark;
+        timings[count++] = (frame & (1UL << bit)) ? LG_ONE_SPACE : LG_ZERO_SPACE;
+    }
+    timings[count++] = bit_mark;
+    timings[count++] = LG_FOOTER_GAP;
+    InfraredSignal* signal = infrared_signal_alloc();
+    if(!signal) return false;
+    infrared_signal_set_raw_signal(
+        signal, timings, count, 38000U, INFRARED_COMMON_DUTY_CYCLE);
+    infrared_signal_transmit(signal);
+    infrared_signal_free(signal);
     return true;
 }
