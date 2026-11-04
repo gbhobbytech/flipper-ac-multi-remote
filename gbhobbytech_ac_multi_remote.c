@@ -1959,7 +1959,7 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
                                                   (uint8_t)((state->temperature_c - 16U) * 4U);
                     state->fujitsu_frame[8] = (uint8_t)((state->fujitsu_frame[8] & 0x03U) | (temp_field << 2));
                     ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
-                } else if(!state->mhi_supported) {
+                } else if(!state->mhi_supported && !state->lg_supported) {
                     if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
                         ac_mitsubishi_legacy_set_temperature(
                             state->mitsubishi_legacy_variant,
