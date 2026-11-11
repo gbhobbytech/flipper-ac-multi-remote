@@ -82,6 +82,10 @@ Captured from the running app with qFlipper:
 
 Profiles are stored under `apps_data/gbhobbytech_ac_multi_remote` on the Flipper Zero microSD card.
 
+## Protocol references
+
+Protocol reference sources and licence considerations are documented in [docs/PROTOCOL_REFERENCES.md](docs/PROTOCOL_REFERENCES.md).
+
 ## License
 
 A/C Master is licensed under the MIT License. See [LICENSE](LICENSE).
