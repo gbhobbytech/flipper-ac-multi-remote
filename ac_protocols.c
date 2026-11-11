@@ -4,6 +4,7 @@
 #include "ac_gree.h"
 #include "ac_fujitsu.h"
 #include "ac_mitsubishi_legacy.h"
+#include "ac_lg.h"
 
 #define AC_PROBE_TEMP_C 24U
 #define AC_PROBE_DUTY_CYCLE INFRARED_COMMON_DUTY_CYCLE
@@ -198,6 +199,26 @@ static bool build_mhi_152_probe(bool power_on, InfraredSignal* signal) {
     return build_mhi_probe(AcMhiVariant152, power_on, signal);
 }
 
+static bool match_lg_variant(const InfraredSignal* signal, AcLgVariant expected) {
+    return ac_lg_matches_variant(signal, expected);
+}
+
+static bool match_lg(const InfraredSignal* signal) {
+    return match_lg_variant(signal, AcLgVariantLg);
+}
+
+static bool match_lg2(const InfraredSignal* signal) {
+    return match_lg_variant(signal, AcLgVariantLg2);
+}
+
+static bool build_lg_probe(bool power_on, InfraredSignal* signal) {
+    return ac_lg_build_probe(AcLgVariantLg, power_on, signal);
+}
+
+static bool build_lg2_probe(bool power_on, InfraredSignal* signal) {
+    return ac_lg_build_probe(AcLgVariantLg2, power_on, signal);
+}
+
 /* ---- Catalogue ---- */
 
 enum {
@@ -205,6 +226,7 @@ enum {
     ManufacturerMitsubishiHeavy,
     ManufacturerFujitsu,
     ManufacturerGree,
+    ManufacturerLg,
 };
 
 static const AcManufacturer manufacturers[] = {
@@ -212,6 +234,7 @@ static const AcManufacturer manufacturers[] = {
     [ManufacturerMitsubishiHeavy] = {.name = "MITSUBISHI HEAVY IND."},
     [ManufacturerFujitsu] = {.name = "FUJITSU"},
     [ManufacturerGree] = {.name = "GREE"},
+    [ManufacturerLg] = {.name = "LG"},
 };
 
 enum {
@@ -219,6 +242,7 @@ enum {
     FamilyMitsubishiHeavy,
     FamilyGree,
     FamilyFujitsu,
+    FamilyLg,
 };
 
 static const AcProtocolFamily families[] = {
@@ -238,6 +262,10 @@ static const AcProtocolFamily families[] = {
         .manufacturer = ManufacturerFujitsu,
         .name = "FUJITSU_AC",
     },
+    [FamilyLg] = {
+        .manufacturer = ManufacturerLg,
+        .name = "LG_AC",
+    },
 };
 
 enum {
@@ -253,6 +281,8 @@ enum {
     VariantFujitsuLong30,
     VariantFujitsuCompact,
     VariantFujitsuLong31,
+    VariantLg,
+    VariantLg2,
 };
 
 static const AcProtocolVariant variants[] = {
@@ -356,6 +386,26 @@ static const AcProtocolVariant variants[] = {
             .supports_room_probe = true,
             .matches = match_fujitsu_long31,
             .build_probe_signal = build_fujitsu_long31_probe,
+        },
+    /* Two documented LG A/C wire formats. These probes are experimental and
+     * profiles remain power-replay-only until controls are validated. */
+    [VariantLg] =
+        {
+            .family = FamilyLg,
+            .name = "LG 28-BIT",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_lg,
+            .build_probe_signal = build_lg_probe,
+        },
+    [VariantLg2] =
+        {
+            .family = FamilyLg,
+            .name = "LG2 28-BIT",
+            .supports_state_control = true,
+            .supports_room_probe = true,
+            .matches = match_lg2,
+            .build_probe_signal = build_lg2_probe,
         },
 };
 

@@ -18,6 +18,7 @@ The bundled protocol library includes Mitsubishi Electric, Mitsubishi Heavy Indu
 - **MHI:** 88-bit and 152-bit pathways are included. The MHI control path has been confirmed on a local unit.
 - **Gree:** YAW1F, YBOFB and YX1FSF variants are included; local hardware verification is still needed.
 - **Fujitsu:** 0x30, compact 0xFC and 0x31 variants are included; local hardware verification is still needed. Fujitsu swing commands are deliberately excluded from probes.
+- **LG (experimental):** the wizard tries LG 28-bit followed by LG2 28-bit, with confirmation after each probe. Confirmed profiles use direct power, temperature (16-30 C), Heat/Cool and Auto/Low/Medium/High fan controls through the unchanged main screen. Fan encodings and real-unit operation still need hardware verification; not all LG models use these protocols.
 
 Protocol compatibility can vary between models. A successful probe should be confirmed by the user before saving a profile. If direct state control is unavailable, learned profiles can replay the saved Normal and Off signals; temperature, mode and fan controls are not available for those profiles.
 
