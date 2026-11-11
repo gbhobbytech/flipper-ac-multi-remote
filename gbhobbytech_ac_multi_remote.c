@@ -206,10 +206,13 @@ static void input_callback(InputEvent* input, void* context) {
             .type = AppEventTypeInput,
             .input = *input,
         };
-        furi_message_queue_put(state->event_queue, &event, FuriWaitForever);
+        /* GUI input callback must never block if the event queue is full. */
+        furi_message_queue_put(state->event_queue, &event, 0U);
     }
 }
 
+/* Preserve the mark/space parity when appending successive IR bursts.
+ * Cap the buffer before copying so malformed/long captures cannot overrun it. */
 static bool append_capture_timings(
     AcMultiRemoteState* state,
     const uint32_t* timings,
@@ -298,7 +301,9 @@ static void received_signal_callback(void* context, InfraredWorkerSignal* receiv
 
     if(post_event) {
         AppEvent event = {.type = AppEventTypeSignalCaptured};
-        furi_message_queue_put(state->event_queue, &event, FuriWaitForever);
+        /* Capture is also polled via capture_activity_snapshot(), so a
+         * full queue must not block the infrared worker callback. */
+        furi_message_queue_put(state->event_queue, &event, 0U);
     }
 }
 
@@ -1050,6 +1055,7 @@ static bool save_signal_to_profile(
     return success;
 }
 
+/* Store Normal and Off together; remove a half-written profile on failure. */
 static bool save_new_profile(AcMultiRemoteState* state) {
     bool success = false;
     char path[96];
@@ -1106,6 +1112,8 @@ static uint8_t mhi_fan_speed_index(AcMhiVariant variant, uint8_t fan_code) {
     return (uint8_t)(FAN_SPEED_COUNT - 1U);
 }
 
+/* Decode the saved Normal signal to restore editable settings. Unrecognised
+ * profiles remain usable as basic Normal/Off replay without state controls. */
 static bool load_profile_control_state(AcMultiRemoteState* state, uint8_t profile_id) {
     state->state_control_supported = false;
     state->mhi_supported = false;
@@ -1659,6 +1667,8 @@ static bool transmit_room_probe(AcMultiRemoteState* state) {
     return built;
 }
 
+/* A successful room probe saves both the tested ON command and an OFF
+ * command; the saved Normal signal is decoded again on profile activation. */
 static bool save_room_probe_profile(AcMultiRemoteState* state) {
     if(state->room_probe_position >= state->room_probe_count) return false;
     const size_t variant_index = state->room_probe_variants[state->room_probe_position];
@@ -1931,7 +1941,7 @@ static void handle_input(AcMultiRemoteState* state, const InputEvent* event) {
                     const uint8_t temp_field = state->fujitsu_variant == AcFujitsuVariantLong31 ?
                                                   (uint8_t)((state->temperature_c - 8U) * 2U) :
                                                   (uint8_t)((state->temperature_c - 16U) * 4U);
-                    state->fujitsu_frame[8] = (uint8_t)((state->fujitsu_frame[8] & 0x01U) | (temp_field << 2));
+                    state->fujitsu_frame[8] = (uint8_t)((state->fujitsu_frame[8] & 0x03U) | (temp_field << 2));
                     ac_fujitsu_update_checksum(state->fujitsu_variant, state->fujitsu_frame);
                 } else if(!state->mhi_supported && !state->lg_supported) {
                     if(state->mitsubishi_legacy_variant != AcMitsubishiLegacyNone) {
